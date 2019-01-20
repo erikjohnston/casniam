@@ -1,4 +1,3 @@
-
 use futures::future::FutureObj;
 use petgraph::visit::Walker;
 
@@ -25,9 +24,6 @@ pub trait AuthRules {
     type State: RoomState;
 
     fn check(e: &Self::Event, s: &Self::State) -> Result<(), ()>;
-    fn get_auth_types<'a>(
-        events: impl IntoIterator<Item = &'a (impl Event + 'a)>,
-    ) -> Vec<(String, String)>;
 }
 
 pub trait RoomVersion<'a> {
@@ -80,14 +76,16 @@ impl<ES: EventStore> Handler<ES> {
 
         let missing = get_missing(&chunk.events);
 
-        let unknown_events = await!(self
-            .event_store
-            .missing_events(missing.iter().map(|e| e as &str)))?;
+        if !missing.is_empty() {
+            let unknown_events = await!(self
+                .event_store
+                .missing_events(missing.iter().map(|e| e as &str)))?;
 
-        if !unknown_events.is_empty() {
-            // TODO: Fetch missing events
-            // TODO: Fetch state for gaps
-            unimplemented!();
+            if !unknown_events.is_empty() {
+                // TODO: Fetch missing events
+                // TODO: Fetch state for gaps
+                unimplemented!();
+            }
         }
 
         let mut event_to_state: HashMap<String, V::State> = HashMap::new();
@@ -126,7 +124,6 @@ impl<ES: EventStore> Handler<ES> {
         Ok(persisted_state)
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PersistEventInfo {
@@ -210,6 +207,8 @@ where
     }
 }
 
+/// Sorts the given vector of events into topological order, with "earliest"
+/// events first.
 fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
     let (ordering, missing) = {
         let mut graph = petgraph::graphmap::DiGraphMap::new();
@@ -264,4 +263,201 @@ fn get_missing<'a>(
     }
 
     missing
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+
+    #[derive(Deserialize)]
+    struct TestEvent {
+        event_id: String,
+        prev_events: Vec<String>,
+    }
+
+    impl Event for TestEvent {
+        fn get_prev_event_ids(&self) -> Vec<&str> {
+            self.prev_events.iter().map(|e| &e as &str).collect()
+        }
+
+        fn get_event_id(&self) -> &str {
+            &self.event_id
+        }
+    }
+
+    #[test]
+    fn test_dag_chunk() {
+        let events = vec![
+            TestEvent {
+                event_id: "B".to_string(),
+                prev_events: vec!["A".to_string()],
+            },
+            TestEvent {
+                event_id: "C".to_string(),
+                prev_events: vec!["B".to_string()],
+            },
+            TestEvent {
+                event_id: "D".to_string(),
+                prev_events: vec!["C".to_string()],
+            },
+        ];
+
+        let chunks = DagChunkFragment::from_events(events);
+
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn test_get_missing() {
+        let events = vec![
+            TestEvent {
+                event_id: "B".to_string(),
+                prev_events: vec!["A".to_string()],
+            },
+            TestEvent {
+                event_id: "C".to_string(),
+                prev_events: vec!["B".to_string()],
+            },
+            TestEvent {
+                event_id: "D".to_string(),
+                prev_events: vec!["C".to_string()],
+            },
+        ];
+
+        let missing = get_missing(events.iter());
+
+        let expected_missing: HashSet<String> =
+            vec!["A".to_string()].into_iter().collect();
+        assert_eq!(missing, expected_missing);
+    }
+
+    #[test]
+    fn test_topo_sort() {
+        let mut events = vec![
+            TestEvent {
+                event_id: "C".to_string(),
+                prev_events: vec!["B".to_string()],
+            },
+            TestEvent {
+                event_id: "B".to_string(),
+                prev_events: vec!["A".to_string()],
+            },
+            TestEvent {
+                event_id: "D".to_string(),
+                prev_events: vec!["C".to_string()],
+            },
+        ];
+
+        let missing = topological_sort(&mut events);
+
+        let order: Vec<&str> =
+            events.iter().map(|e| e.get_event_id()).collect();
+
+        let expected_order = vec!["B", "C", "D"];
+
+        assert_eq!(order, expected_order);
+
+        let expected_missing: HashSet<String> =
+            vec!["A".to_string()].into_iter().collect();
+        assert_eq!(missing, expected_missing);
+    }
+
+    #[derive(Clone)]
+    struct DummyState;
+
+    impl RoomState for DummyState {
+        type Event = TestEvent;
+
+        fn resolve_state<'a>(
+            _states: Vec<&'a Self>,
+            _store: &'a impl EventStore,
+        ) -> Result<Self, ()> {
+            Ok(DummyState)
+        }
+
+        fn add_event<'a>(&mut self, _event: &'a Self::Event) {}
+    }
+
+    struct DummyAuth;
+
+    impl AuthRules for DummyAuth {
+        type Event = TestEvent;
+        type State = DummyState;
+
+        fn check(_e: &Self::Event, _s: &Self::State) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+
+    struct DummyVersion;
+
+    impl<'a> RoomVersion<'a> for DummyVersion {
+        type Event = TestEvent;
+        type State = DummyState;
+        type Auth = DummyAuth;
+    }
+
+    struct DummyStore;
+
+    impl EventStore for DummyStore {
+        fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
+            &self,
+            _event_ids: I,
+        ) -> FutureObj<Result<Vec<String>, ()>> {
+            unimplemented!()
+        }
+
+        fn get_events<E: Event>(
+            &self,
+            _event_ids: &[&str],
+        ) -> FutureObj<Result<Vec<E>, ()>> {
+            unimplemented!()
+        }
+
+        fn get_state_for<S: RoomState>(
+            &self,
+            _event_ids: &[&str],
+        ) -> FutureObj<Result<Option<S>, ()>> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn test_handle() {
+        let handler = Handler {
+            event_store: DummyStore,
+        };
+
+        let events = vec![
+            TestEvent {
+                event_id: "A".to_string(),
+                prev_events: vec![],
+            },
+            TestEvent {
+                event_id: "B".to_string(),
+                prev_events: vec!["A".to_string()],
+            },
+            TestEvent {
+                event_id: "C".to_string(),
+                prev_events: vec!["B".to_string()],
+            },
+            TestEvent {
+                event_id: "D".to_string(),
+                prev_events: vec!["C".to_string()],
+            },
+        ];
+
+        let mut chunks = DagChunkFragment::from_events(events);
+
+        let fut = handler.handle_chunk::<DummyVersion>(chunks.pop().unwrap());
+
+        let results = block_on(fut).unwrap();
+
+        assert_eq!(results.len(), 4);
+
+        for res in results {
+            assert!(!res.rejected);
+        }
+    }
 }
