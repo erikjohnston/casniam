@@ -3,6 +3,9 @@ use petgraph::visit::Walker;
 
 use std::collections::{HashMap, HashSet};
 
+pub mod v1;
+
+
 pub trait Event {
     fn get_prev_event_ids(&self) -> Vec<&str>;
     fn get_event_id(&self) -> &str;
@@ -26,10 +29,10 @@ pub trait AuthRules {
     fn check(e: &Self::Event, s: &Self::State) -> Result<(), ()>;
 }
 
-pub trait RoomVersion<'a> {
-    type Event: Event + 'a;
-    type State: RoomState<Event = Self::Event> + 'a;
-    type Auth: AuthRules<Event = Self::Event, State = Self::State> + 'a;
+pub trait RoomVersion {
+    type Event: Event;
+    type State: RoomState<Event = Self::Event>;
+    type Auth: AuthRules<Event = Self::Event, State = Self::State>;
 }
 
 pub trait EventStore {
@@ -66,10 +69,10 @@ pub struct Handler<E: EventStore> {
 }
 
 impl<ES: EventStore> Handler<ES> {
-    pub async fn handle_chunk<V: RoomVersion<'static>>(
+    pub async fn handle_chunk<V: RoomVersion + 'static>(
         &self,
         chunk: DagChunkFragment<V::Event>,
-    ) -> Result<Vec<PersistEventInfo>, ()> {
+    ) -> Result<Vec<PersistEventInfo<V>>, ()> {
         // TODO: This doesn't check signatures/hashes or whether it passes auth
         // checks based on auth events. Nor does it check for soft failures.
         // Former should be checked before we enter here, the latter after.
@@ -95,7 +98,7 @@ impl<ES: EventStore> Handler<ES> {
             event_to_state.insert(event_id.to_string(), state.unwrap());
         }
 
-        let mut persisted_state: Vec<PersistEventInfo> = Vec::new();
+        let mut persisted_state: Vec<PersistEventInfo<V>> = Vec::new();
         for event in &chunk.events {
             let event_id = event.get_event_id();
 
@@ -110,13 +113,14 @@ impl<ES: EventStore> Handler<ES> {
 
             let rejected = V::Auth::check(event, &state_before).is_err();
 
+            let mut state_after = state_before.clone();
+            state_after.add_event(event);
+
             persisted_state.push(PersistEventInfo {
                 event_id: event_id.to_string(),
                 rejected,
+                state_before,
             });
-
-            let mut state_after = state_before.clone();
-            state_after.add_event(event);
 
             event_to_state.insert(event_id.to_string(), state_after);
         }
@@ -126,10 +130,10 @@ impl<ES: EventStore> Handler<ES> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PersistEventInfo {
+pub struct PersistEventInfo<R: RoomVersion> {
     event_id: String,
     rejected: bool,
-    // state: RoomState,  // TODO: How do we talk about state changes?
+    state_before: R::State,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -392,7 +396,7 @@ mod tests {
 
     struct DummyVersion;
 
-    impl<'a> RoomVersion<'a> for DummyVersion {
+    impl RoomVersion for DummyVersion {
         type Event = TestEvent;
         type State = DummyState;
         type Auth = DummyAuth;
