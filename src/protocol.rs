@@ -1,10 +1,10 @@
-use futures::future::FutureObj;
+use futures::future::{self, Future, FutureExt, FutureObj};
 use petgraph::visit::Walker;
 
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 
-pub mod v1;
-
+// pub mod v1;
 
 pub trait Event {
     fn get_prev_event_ids(&self) -> Vec<&str>;
@@ -18,15 +18,24 @@ pub trait RoomState: Clone {
     fn resolve_state<'a>(
         states: Vec<&'a Self>,
         store: &'a impl EventStore,
-    ) -> Result<Self, ()>;
+    ) -> Pin<Box<Future<Output = Result<Self, ()>>>>;
     fn add_event<'a>(&mut self, event: &'a Self::Event);
+    fn get_event(
+        &self,
+        store: &impl EventStore,
+        etype: &str,
+        state_key: &str,
+    ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, ()>>>>;
 }
 
 pub trait AuthRules {
     type Event: Event;
     type State: RoomState;
 
-    fn check(e: &Self::Event, s: &Self::State) -> Result<(), ()>;
+    fn check<'a>(
+        e: &Self::Event,
+        s: &Self::State,
+    ) -> Pin<Box<Future<Output = Result<(), ()>>>>;
 }
 
 pub trait RoomVersion {
@@ -39,15 +48,15 @@ pub trait EventStore {
     fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
         &self,
         event_ids: I,
-    ) -> FutureObj<Result<Vec<String>, ()>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<String>, ()>>>>;
     fn get_events<E: Event>(
         &self,
         event_ids: &[&str],
-    ) -> FutureObj<Result<Vec<E>, ()>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>>;
     fn get_state_for<S: RoomState>(
         &self,
         event_ids: &[&str],
-    ) -> FutureObj<Result<Option<S>, ()>>;
+    ) -> Pin<Box<Future<Output = Result<Option<S>, ()>>>>;
 }
 
 pub trait FederationClient {
@@ -56,11 +65,11 @@ pub trait FederationClient {
         forward: Vec<String>,
         back: Vec<String>,
         limit: usize,
-    ) -> FutureObj<Result<Vec<E>, ()>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>>;
     fn get_state_at<S: RoomState>(
         &self,
         event_id: &str,
-    ) -> FutureObj<Result<S, ()>>;
+    ) -> Pin<Box<Future<Output = Result<S, ()>>>>;
 }
 
 pub struct Handler<E: EventStore> {
@@ -109,9 +118,11 @@ impl<ES: EventStore> Handler<ES> {
                 .collect();
 
             let state_before =
-                V::State::resolve_state(states, &self.event_store)?;
+                await!(V::State::resolve_state(states, &self.event_store))?;
 
-            let rejected = V::Auth::check(event, &state_before).is_err();
+            // FIXME: Differentiate between DB and auth errors.
+            let rejected =
+                await!(V::Auth::check(event, &state_before)).is_err();
 
             let mut state_after = state_before.clone();
             state_after.add_event(event);
@@ -376,11 +387,21 @@ mod tests {
         fn resolve_state<'a>(
             _states: Vec<&'a Self>,
             _store: &'a impl EventStore,
-        ) -> Result<Self, ()> {
-            Ok(DummyState)
+        ) -> Pin<Box<Future<Output = Result<Self, ()>>>> {
+            future::ok(DummyState).boxed()
         }
 
         fn add_event<'a>(&mut self, _event: &'a Self::Event) {}
+
+        fn get_event(
+            &self,
+            store: &impl EventStore,
+            etype: &str,
+            state_key: &str,
+        ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, ()>>>>
+        {
+            unimplemented!()
+        }
     }
 
     struct DummyAuth;
@@ -389,8 +410,11 @@ mod tests {
         type Event = TestEvent;
         type State = DummyState;
 
-        fn check(_e: &Self::Event, _s: &Self::State) -> Result<(), ()> {
-            Ok(())
+        fn check<'a>(
+            _e: &Self::Event,
+            _s: &Self::State,
+        ) -> Pin<Box<Future<Output = Result<(), ()>>>> {
+            future::ok(()).boxed()
         }
     }
 
@@ -408,21 +432,21 @@ mod tests {
         fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
             &self,
             _event_ids: I,
-        ) -> FutureObj<Result<Vec<String>, ()>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<String>, ()>>>> {
             unimplemented!()
         }
 
         fn get_events<E: Event>(
             &self,
             _event_ids: &[&str],
-        ) -> FutureObj<Result<Vec<E>, ()>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>> {
             unimplemented!()
         }
 
         fn get_state_for<S: RoomState>(
             &self,
             _event_ids: &[&str],
-        ) -> FutureObj<Result<Option<S>, ()>> {
+        ) -> Pin<Box<Future<Output = Result<Option<S>, ()>>>> {
             unimplemented!()
         }
     }
