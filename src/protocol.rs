@@ -4,7 +4,7 @@ use petgraph::visit::Walker;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 
-// pub mod v1;
+pub mod v1;
 
 pub trait Event {
     fn get_prev_event_ids(&self) -> Vec<&str>;
@@ -20,6 +20,13 @@ pub trait RoomState: Clone {
         store: &'a impl EventStore,
     ) -> Pin<Box<Future<Output = Result<Self, ()>>>>;
     fn add_event<'a>(&mut self, event: &'a Self::Event);
+
+    fn get_event_id(
+        &self,
+        etype: &str,
+        state_key: &str,
+    ) -> Pin<Box<Future<Output = Result<Option<String>, ()>>>>;
+
     fn get_event(
         &self,
         store: &impl EventStore,
