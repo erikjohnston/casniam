@@ -4,7 +4,7 @@ use petgraph::visit::Walker;
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 
-pub mod v1;
+// pub mod v1;
 
 pub trait Event {
     fn get_prev_event_ids(&self) -> Vec<&str>;
@@ -407,6 +407,14 @@ mod tests {
             state_key: &str,
         ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, ()>>>>
         {
+            unimplemented!()
+        }
+
+        fn get_event_id(
+            &self,
+            etype: &str,
+            state_key: &str,
+        ) -> Pin<Box<Future<Output = Result<Option<String>, ()>>>> {
             unimplemented!()
         }
     }
