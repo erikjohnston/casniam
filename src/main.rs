@@ -163,7 +163,7 @@ fn main() {
     for chunk in chunks {
         let results = block_on(handler.handle_chunk::<RoomVersionV1>(chunk)).unwrap();
         for res in &results {
-            println!("{}: rejected={}", res.event_id, res.rejected);
+            println!("{}: rejected={}", res.event.get_event_id(), res.rejected);
 
             last_state = Some(res.state_before.clone());
         }

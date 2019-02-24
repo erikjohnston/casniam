@@ -130,8 +130,8 @@ impl<ES: EventStore> Handler<ES> {
         }
 
         let mut persisted_state: Vec<PersistEventInfo<V>> = Vec::new();
-        for event in &chunk.events {
-            let event_id = event.get_event_id();
+        for event in chunk.events {
+            let event_id = event.get_event_id().to_string();
 
             let states = event
                 .get_prev_event_ids()
@@ -144,18 +144,18 @@ impl<ES: EventStore> Handler<ES> {
 
             // FIXME: Differentiate between DB and auth errors.
             let rejected =
-                await!(V::Auth::check(event, &state_before)).is_err();
+                await!(V::Auth::check(&event, &state_before)).is_err();
 
             let mut state_after = state_before.clone();
-            state_after.add_event(event);
+            state_after.add_event(&event);
 
             persisted_state.push(PersistEventInfo {
-                event_id: event_id.to_string(),
+                event,
                 rejected,
                 state_before,
             });
 
-            event_to_state.insert(event_id.to_string(), state_after);
+            event_to_state.insert(event_id, state_after);
         }
 
         Ok(persisted_state)
@@ -164,7 +164,7 @@ impl<ES: EventStore> Handler<ES> {
 
 #[derive(Debug, Clone)]
 pub struct PersistEventInfo<R: RoomVersion> {
-    pub event_id: String,
+    pub event: R::Event,
     pub rejected: bool,
     pub state_before: R::State,
 }
@@ -451,7 +451,7 @@ mod tests {
         fn check<'a>(
             _e: &Self::Event,
             _s: &Self::State,
-        ) -> Pin<Box<Future<Output = Result<(), ()>>>> {
+        ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
             future::ok(()).boxed()
         }
     }
