@@ -6,12 +6,13 @@ extern crate serde_derive;
 extern crate failure;
 
 mod protocol;
+mod state_map;
 
 use serde::de::IgnoredAny;
 
 use crate::protocol::{DagChunkFragment, Event};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 struct V1Event {
     event_id: String,
     prev_events: Vec<(String, IgnoredAny)>,

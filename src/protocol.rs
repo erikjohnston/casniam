@@ -2,11 +2,16 @@ use futures::future::{self, Future, FutureExt, FutureObj};
 use petgraph::visit::Walker;
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::pin::Pin;
 
-// pub mod v1;
+use failure::Error;
 
-pub trait Event {
+use crate::state_map::StateMap;
+
+pub mod v1;
+
+pub trait Event: Clone + fmt::Debug {
     fn get_prev_event_ids(&self) -> Vec<&str>;
     fn get_event_id(&self) -> &str;
 }
@@ -18,21 +23,27 @@ pub trait RoomState: Clone {
     fn resolve_state<'a>(
         states: Vec<&'a Self>,
         store: &'a impl EventStore,
-    ) -> Pin<Box<Future<Output = Result<Self, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<Self, Error>>>>;
+
     fn add_event<'a>(&mut self, event: &'a Self::Event);
 
-    fn get_event_id(
-        &self,
-        etype: &str,
-        state_key: &str,
-    ) -> Pin<Box<Future<Output = Result<Option<String>, ()>>>>;
+    // fn get_event_id(
+    //     &self,
+    //     etype: &str,
+    //     state_key: &str,
+    // ) -> Pin<Box<Future<Output = Result<Option<String>, Error>>>>;
 
-    fn get_event(
+    // fn get_event(
+    //     &self,
+    //     store: &impl EventStore,
+    //     etype: &str,
+    //     state_key: &str,
+    // ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, Error>>>>;
+
+    fn get_types(
         &self,
-        store: &impl EventStore,
-        etype: &str,
-        state_key: &str,
-    ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, ()>>>>;
+        types: impl IntoIterator<Item = (String, String)>,
+    ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>>;
 }
 
 pub trait AuthRules {
@@ -55,15 +66,15 @@ pub trait EventStore {
     fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
         &self,
         event_ids: I,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
     fn get_events<E: Event>(
         &self,
         event_ids: &[&str],
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
     fn get_state_for<S: RoomState>(
         &self,
         event_ids: &[&str],
-    ) -> Pin<Box<Future<Output = Result<Option<S>, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>>;
 }
 
 pub trait FederationClient {
@@ -72,11 +83,11 @@ pub trait FederationClient {
         forward: Vec<String>,
         back: Vec<String>,
         limit: usize,
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
     fn get_state_at<S: RoomState>(
         &self,
         event_id: &str,
-    ) -> Pin<Box<Future<Output = Result<S, ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
 }
 
 pub struct Handler<E: EventStore> {
@@ -88,7 +99,7 @@ impl<ES: EventStore> Handler<ES> {
     pub async fn handle_chunk<V: RoomVersion + 'static>(
         &self,
         chunk: DagChunkFragment<V::Event>,
-    ) -> Result<Vec<PersistEventInfo<V>>, ()> {
+    ) -> Result<Vec<PersistEventInfo<V>>, Error> {
         // TODO: This doesn't check signatures/hashes or whether it passes auth
         // checks based on auth events. Nor does it check for soft failures.
         // Former should be checked before we enter here, the latter after.
@@ -292,7 +303,7 @@ mod tests {
     use super::*;
     use futures::executor::block_on;
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug, Clone)]
     struct TestEvent {
         event_id: String,
         prev_events: Vec<String>,
@@ -394,27 +405,35 @@ mod tests {
         fn resolve_state<'a>(
             _states: Vec<&'a Self>,
             _store: &'a impl EventStore,
-        ) -> Pin<Box<Future<Output = Result<Self, ()>>>> {
+        ) -> Pin<Box<Future<Output = Result<Self, Error>>>> {
             future::ok(DummyState).boxed()
         }
 
         fn add_event<'a>(&mut self, _event: &'a Self::Event) {}
 
-        fn get_event(
-            &self,
-            store: &impl EventStore,
-            etype: &str,
-            state_key: &str,
-        ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, ()>>>>
-        {
-            unimplemented!()
-        }
+        // fn get_event(
+        //     &self,
+        //     store: &impl EventStore,
+        //     etype: &str,
+        //     state_key: &str,
+        // ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, Error>>>>
+        // {
+        //     unimplemented!()
+        // }
 
-        fn get_event_id(
+        // fn get_event_id(
+        //     &self,
+        //     etype: &str,
+        //     state_key: &str,
+        // ) -> Pin<Box<Future<Output = Result<Option<String>, Error>>>> {
+        //     unimplemented!()
+        // }
+
+        fn get_types(
             &self,
-            etype: &str,
-            state_key: &str,
-        ) -> Pin<Box<Future<Output = Result<Option<String>, ()>>>> {
+            types: impl IntoIterator<Item = (String, String)>,
+        ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>>
+        {
             unimplemented!()
         }
     }
@@ -447,21 +466,21 @@ mod tests {
         fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
             &self,
             _event_ids: I,
-        ) -> Pin<Box<Future<Output = Result<Vec<String>, ()>>>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
             unimplemented!()
         }
 
         fn get_events<E: Event>(
             &self,
             _event_ids: &[&str],
-        ) -> Pin<Box<Future<Output = Result<Vec<E>, ()>>>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
             unimplemented!()
         }
 
         fn get_state_for<S: RoomState>(
             &self,
             _event_ids: &[&str],
-        ) -> Pin<Box<Future<Output = Result<Option<S>, ()>>>> {
+        ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>> {
             unimplemented!()
         }
     }
