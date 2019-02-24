@@ -6,11 +6,16 @@ use failure::Error;
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::marker::PhantomData;
+use std::pin::Pin;
+
+use futures::Future;
 
 use serde_json::{self, Value};
 
 use super::EventV1;
 use crate::state_map::StateMap;
+use crate::protocol::AuthRules;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string
@@ -19,16 +24,34 @@ pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
         .ok_or_else(|| format_err!("invalid ID"))
 }
 
+#[derive(Default)]
+pub struct AuthV1<E, S> {
+    e: PhantomData<E>,
+    s: PhantomData<S>,
+}
+
+impl <E, S> AuthRules for AuthV1<E, S> where E: EventV1 + 'static, S: RoomState<Event = E> + Clone + fmt::Debug + 'static {
+    type Event = E;
+    type State = S;
+
+    fn check<'a>(
+        e: &'a Self::Event,
+        s: &'a Self::State,
+    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+        Pin::from(Box::new(check(e.clone(), s.clone())))
+    }
+}
+
 /// Check if the given event parses auth.
-pub async fn check<'a, E, S>(event: &'a E, state: &'a S) -> Result<(), Error>
+pub async fn check<'a, E, S>(event: E, state: S) -> Result<(), Error>
 where
     E: EventV1 + Clone + fmt::Debug,
     S: RoomState<Event = E> + Clone + fmt::Debug,
 {
-    let types = auth_types_for_event(event);
+    let types = auth_types_for_event(&event);
     let auth_events = await!(state.get_types(types))?;
 
-    Checker { event, auth_events }.check()
+    Checker { event: &event, auth_events }.check()
 }
 
 struct Checker<'a, E: Clone + fmt::Debug> {

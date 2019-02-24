@@ -53,7 +53,7 @@ pub trait AuthRules {
     fn check<'a>(
         e: &Self::Event,
         s: &Self::State,
-    ) -> Pin<Box<Future<Output = Result<(), ()>>>>;
+    ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
 }
 
 pub trait RoomVersion {
@@ -96,6 +96,10 @@ pub struct Handler<E: EventStore> {
 }
 
 impl<ES: EventStore> Handler<ES> {
+    pub fn new(event_store: ES) -> Self {
+        Handler { event_store }
+    }
+
     pub async fn handle_chunk<V: RoomVersion + 'static>(
         &self,
         chunk: DagChunkFragment<V::Event>,
@@ -160,9 +164,9 @@ impl<ES: EventStore> Handler<ES> {
 
 #[derive(Debug, Clone)]
 pub struct PersistEventInfo<R: RoomVersion> {
-    event_id: String,
-    rejected: bool,
-    state_before: R::State,
+    pub event_id: String,
+    pub rejected: bool,
+    pub state_before: R::State,
 }
 
 #[derive(Debug, Default, Clone)]
