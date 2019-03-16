@@ -5,22 +5,25 @@ extern crate serde_derive;
 #[macro_use]
 extern crate failure;
 
-#[macro_use] extern crate prettytable;
-use prettytable::{Table, Row, Cell};
+#[macro_use]
+extern crate prettytable;
+use prettytable::Table;
 
 mod protocol;
-mod state_map;
+pub mod state_map;
 
 use serde::de::IgnoredAny;
 
 use std::pin::Pin;
 
 use failure::Error;
-use futures::{future, Future, FutureExt};
 use futures::executor::block_on;
+use futures::{future, Future, FutureExt};
 
-use crate::protocol::{DagChunkFragment, Event, EventStore, RoomState, Handler, RoomVersion};
-use crate::protocol::v1::{EventV1, auth};
+use crate::protocol::v1::{auth, EventV1};
+use crate::protocol::{
+    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomVersion,
+};
 use crate::state_map::StateMap;
 
 impl RoomState for StateMap<V1Event> {
@@ -47,7 +50,7 @@ impl RoomState for StateMap<V1Event> {
 
     fn get_types(
         &self,
-        types: impl IntoIterator<Item = (String, String)>,
+        _types: impl IntoIterator<Item = (String, String)>,
     ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>> {
         future::ok(self.clone()).boxed()
     }
@@ -135,7 +138,6 @@ impl EventStore for DummyStore {
     }
 }
 
-
 fn main() {
     let evs = vec![
         r#"{"auth_events": [["$1551018411312bOlzG:jki.re", {"sha256": "WwWVw1M3pyKlOWOj9OTeSR0dIXPFYttqAefJH5cr57g"}], ["$1551018411313fejqG:jki.re", {"sha256": "SoWbVs0mf21GfpgjXxyi8Es3qnfvUzNt7gK55/Mu2Yg"}], ["$1551018411314oxMbu:jki.re", {"sha256": "j5OeKDtiq+j8FLdthUy61ULqEc6Efwgm/tHdGV+zUSc"}]], "prev_events": [["$1551018411314oxMbu:jki.re", {"sha256": "j5OeKDtiq+j8FLdthUy61ULqEc6Efwgm/tHdGV+zUSc"}]], "type": "m.room.join_rules", "room_id": "!cjExvKHhAErxzYQmhV:jki.re", "sender": "@erikj:jki.re", "content": {"join_rule": "invite"}, "depth": 4, "prev_state": [], "state_key": "", "event_id": "$1551018411315nZGTA:jki.re", "origin": "jki.re", "origin_server_ts": 1551018411889, "hashes": {"sha256": "OVPGJh0Rs/LGJo1L/bYgmIqEQ69fHeqrzsRBlgvRZMk"}, "signatures": {"jki.re": {"ed25519:auto": "X0mHY60sqzDNCavu7wfvhB+up4oMNBq5RqiUYKHBwR/hq8fR8dAfr5fH8gfztVDEvoDWI+fRNtxH1c+/vwaNDQ"}}, "unsigned": {"age_ts": 1551018411889}}"#,
@@ -161,7 +163,8 @@ fn main() {
 
     let mut last_state = None;
     for chunk in chunks {
-        let results = block_on(handler.handle_chunk::<RoomVersionV1>(chunk)).unwrap();
+        let results =
+            block_on(handler.handle_chunk::<RoomVersionV1>(chunk)).unwrap();
         for res in &results {
             println!("{}: rejected={}", res.event.get_event_id(), res.rejected);
 
@@ -173,7 +176,9 @@ fn main() {
         println!("");
 
         let mut table = Table::new();
-        table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+        table.set_format(
+            *prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR,
+        );
 
         table.set_titles(row!["Type", "State Key", "Event ID"]);
 

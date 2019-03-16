@@ -5,17 +5,17 @@ use std::fmt;
 use failure::Error;
 
 use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::str::FromStr;
 
 use futures::Future;
 
 use serde_json::{self, Value};
 
 use super::EventV1;
-use crate::state_map::StateMap;
 use crate::protocol::AuthRules;
+use crate::state_map::StateMap;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string
@@ -30,7 +30,11 @@ pub struct AuthV1<E, S> {
     s: PhantomData<S>,
 }
 
-impl <E, S> AuthRules for AuthV1<E, S> where E: EventV1 + 'static, S: RoomState<Event = E> + Clone + fmt::Debug + 'static {
+impl<E, S> AuthRules for AuthV1<E, S>
+where
+    E: EventV1 + 'static,
+    S: RoomState<Event = E> + Clone + fmt::Debug + 'static,
+{
     type Event = E;
     type State = S;
 
@@ -51,7 +55,11 @@ where
     let types = auth_types_for_event(&event);
     let auth_events = await!(state.get_types(types))?;
 
-    Checker { event: &event, auth_events }.check()
+    Checker {
+        event: &event,
+        auth_events,
+    }
+    .check()
 }
 
 struct Checker<'a, E: Clone + fmt::Debug> {

@@ -1,4 +1,4 @@
-use futures::future::{self, Future, FutureExt, FutureObj};
+use futures::future::Future;
 use petgraph::visit::Walker;
 
 use std::collections::{HashMap, HashSet};

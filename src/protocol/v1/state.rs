@@ -99,75 +99,75 @@ where
     }
 }
 
-pub fn resolve_state_delta<E>(
-    state_sets: Vec<&StateMap<String>>,
-    event_map: &HashMap<String, E>,
-    prev_conflicted_senders: &StateMap<HashSet<String>>,
-    delta: &[(&str, &str)],
-) -> ResolvedState
-where
-    E: EventV1,
-{
-    let to_recalculate =
-        auth::filter_changed_state(prev_conflicted_senders, delta);
+// pub fn resolve_state_delta<E>(
+//     state_sets: Vec<&StateMap<String>>,
+//     event_map: &HashMap<String, E>,
+//     prev_conflicted_senders: &StateMap<HashSet<String>>,
+//     delta: &[(&str, &str)],
+// ) -> ResolvedState
+// where
+//     E: EventV1,
+// {
+//     let to_recalculate =
+//         auth::filter_changed_state(prev_conflicted_senders, delta);
 
-    let mut auth_types: HashSet<(String, String)> = to_recalculate
-        .iter()
-        .map(|(t, s)| ((*t).into(), (*s).into()))
-        .collect();
+//     let mut auth_types: HashSet<(String, String)> = to_recalculate
+//         .iter()
+//         .map(|(t, s)| ((*t).into(), (*s).into()))
+//         .collect();
 
-    let mut pending: Vec<(String, String)> = to_recalculate
-        .iter()
-        .map(|(t, s)| ((*t).into(), (*s).into()))
-        .collect();
-    let mut handled = HashSet::new();
-    while let Some((t, s)) = pending.pop() {
-        if handled.contains(&(t.clone(), s.clone())) {
-            continue;
-        }
-        handled.insert((t.clone(), s.clone()));
+//     let mut pending: Vec<(String, String)> = to_recalculate
+//         .iter()
+//         .map(|(t, s)| ((*t).into(), (*s).into()))
+//         .collect();
+//     let mut handled = HashSet::new();
+//     while let Some((t, s)) = pending.pop() {
+//         if handled.contains(&(t.clone(), s.clone())) {
+//             continue;
+//         }
+//         handled.insert((t.clone(), s.clone()));
 
-        for map in &state_sets {
-            if let Some(eid) = map.get(&t, &s) {
-                let event = &event_map[eid];
+//         for map in &state_sets {
+//             if let Some(eid) = map.get(&t, &s) {
+//                 let event = &event_map[eid];
 
-                let a = auth::auth_types_for_event(event);
-                for key in &a {
-                    if prev_conflicted_senders.get(&key.0, &key.1).is_some() {
-                        pending.push((key.0.clone(), key.1.clone()))
-                    }
-                }
+//                 let a = auth::auth_types_for_event(event);
+//                 for key in &a {
+//                     if prev_conflicted_senders.get(&key.0, &key.1).is_some() {
+//                         pending.push((key.0.clone(), key.1.clone()))
+//                     }
+//                 }
 
-                auth_types.extend(a.into_iter());
-            }
-        }
-    }
+//                 auth_types.extend(a.into_iter());
+//             }
+//         }
+//     }
 
-    let mut new_state_sets: Vec<StateMap<String>> = Vec::new();
-    new_state_sets.resize(state_sets.len(), StateMap::new());
-    for (t, s) in &auth_types {
-        for (i, set) in state_sets.iter().enumerate() {
-            if let Some(eid) = set.get(t, s) {
-                new_state_sets[i].insert(t, s, eid.clone());
-            }
-        }
-    }
+//     let mut new_state_sets: Vec<StateMap<String>> = Vec::new();
+//     new_state_sets.resize(state_sets.len(), StateMap::new());
+//     for (t, s) in &auth_types {
+//         for (i, set) in state_sets.iter().enumerate() {
+//             if let Some(eid) = set.get(t, s) {
+//                 new_state_sets[i].insert(t, s, eid.clone());
+//             }
+//         }
+//     }
 
-    let mut r = resolve_state(new_state_sets.iter().collect(), event_map);
+//     let mut r = resolve_state(new_state_sets.iter().collect(), event_map);
 
-    r.conflicted_senders
-        .extend(prev_conflicted_senders.iter().filter_map(
-            |((t, s), value)| {
-                if !auth_types.contains(&(t.into(), s.into())) {
-                    Some(((t, s), value.clone()))
-                } else {
-                    None
-                }
-            },
-        ));
+//     r.conflicted_senders
+//         .extend(prev_conflicted_senders.iter().filter_map(
+//             |((t, s), value)| {
+//                 if !auth_types.contains(&(t.into(), s.into())) {
+//                     Some(((t, s), value.clone()))
+//                 } else {
+//                     None
+//                 }
+//             },
+//         ));
 
-    r
-}
+//     r
+// }
 
 fn resolve_conflicts_state<E>(
     unconflicted: StateMap<String>,
