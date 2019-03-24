@@ -5,13 +5,15 @@ name = "casniam"
 version = "0.1.0"
 
 [dependencies]
+actix = "0.7.9"
+actix-web = "0.7.18"
 failure = "0.1.5"
 futures-preview = "0.3.0-alpha.5"
 petgraph = "0.4.13"
 prettytable-rs = "0.8.0"
 serde = "1.0.84"
 serde_derive = "1.0.84"
-serde_json = "1.0.27"
+serde_json = { version = "1.0.27", features = ["raw_value"] }
 smallvec = "0.6.9"
 tokio = "0.1.11"
 tokio-async-await = "0.1.0"

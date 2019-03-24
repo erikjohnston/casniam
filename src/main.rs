@@ -11,6 +11,7 @@ use prettytable::Table;
 
 mod protocol;
 pub mod state_map;
+pub mod canonical_json;
 
 use serde::de::IgnoredAny;
 
