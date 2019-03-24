@@ -1,4 +1,4 @@
-use crate::protocol::{Event, RoomState};
+use crate::protocol::RoomState;
 
 use std::fmt;
 

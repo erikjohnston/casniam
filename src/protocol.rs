@@ -306,6 +306,7 @@ fn get_missing<'a>(
 mod tests {
     use super::*;
     use futures::executor::block_on;
+    use futures::future;
 
     #[derive(Deserialize, Debug, Clone)]
     struct TestEvent {
@@ -410,7 +411,7 @@ mod tests {
             _states: Vec<&'a Self>,
             _store: &'a impl EventStore,
         ) -> Pin<Box<Future<Output = Result<Self, Error>>>> {
-            future::ok(DummyState).boxed()
+            Box::pin(future::ok(DummyState))
         }
 
         fn add_event<'a>(&mut self, _event: &'a Self::Event) {}
@@ -435,7 +436,7 @@ mod tests {
 
         fn get_types(
             &self,
-            types: impl IntoIterator<Item = (String, String)>,
+            _types: impl IntoIterator<Item = (String, String)>,
         ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>>
         {
             unimplemented!()
@@ -452,7 +453,7 @@ mod tests {
             _e: &Self::Event,
             _s: &Self::State,
         ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
-            future::ok(()).boxed()
+            Box::pin(future::ok(()))
         }
     }
 
