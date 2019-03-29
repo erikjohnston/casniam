@@ -9,9 +9,9 @@ extern crate failure;
 extern crate prettytable;
 use prettytable::Table;
 
+pub mod json;
 mod protocol;
 pub mod state_map;
-pub mod canonical_json;
 
 use serde::de::IgnoredAny;
 

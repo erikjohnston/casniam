@@ -7,17 +7,27 @@ version = "0.1.0"
 [dependencies]
 actix = "0.7.9"
 actix-web = "0.7.18"
+base64 = "0.10.1"
 failure = "0.1.5"
 futures-preview = "0.3.0-alpha.5"
 petgraph = "0.4.13"
 prettytable-rs = "0.8.0"
 serde = "1.0.84"
 serde_derive = "1.0.84"
-serde_json = { version = "1.0.27", features = ["raw_value"] }
 smallvec = "0.6.9"
+sodiumoxide = "0.2.1"
 tokio = "0.1.11"
 tokio-async-await = "0.1.0"
+
+[dependencies.indolentjson]
+git = "https://github.com/NegativeMjark/indolentjson-rust.git"
+
+[dependencies.serde_json]
+features = ["raw_value"]
+version = "1.0.27"
 
 [dependencies.sha1]
 features = ["std"]
 version = "0.6.0"
+[replace."cookie:0.11.0"]
+git = "https://github.com/alexcrichton/cookie-rs.git"
