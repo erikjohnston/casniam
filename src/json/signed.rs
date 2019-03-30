@@ -99,7 +99,10 @@ where
         v.as_object_mut()
             .unwrap()
             .insert("signatures".to_string(), s);
-        v.as_object_mut().unwrap().insert("unsigned".to_string(), u);
+
+        if !u.is_null() {
+            v.as_object_mut().unwrap().insert("unsigned".to_string(), u);
+        }
 
         v.serialize(serializer)
     }
@@ -120,6 +123,12 @@ impl From<Base64Signature> for Signature {
     }
 }
 
+impl AsRef<Signature> for Base64Signature {
+    fn as_ref(&self) -> &Signature {
+        &self.0
+    }
+}
+
 impl serde::Serialize for Base64Signature {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -137,15 +146,15 @@ impl<'de> serde::Deserialize<'de> for Base64Signature {
     where
         D: serde::Deserializer<'de>,
     {
-        let de_string: &str = <(&str)>::deserialize(deserializer)?;
+        let de_string: String = String::deserialize(deserializer)?;
 
-        let slice = base64::decode_config(de_string, base64::STANDARD_NO_PAD)
+        let slice = base64::decode_config(&de_string, base64::STANDARD_NO_PAD)
             .map_err(|e| {
-            D::Error::custom(format_args!(
-                "invalid base64: {}, {}",
-                de_string, e,
-            ))
-        })?;
+                D::Error::custom(format_args!(
+                    "invalid base64: {}, {}",
+                    de_string, e,
+                ))
+            })?;
 
         let sig = Signature::from_slice(&slice)
             .ok_or_else(|| D::Error::custom("signature incorrect length"))?;
@@ -208,6 +217,71 @@ mod tests {
 
         let j = serde_json::to_string(&s).unwrap();
 
-        assert_eq!(j, r#"{"a":1,"signatures":{},"unsigned":null}"#);
+        assert_eq!(j, r#"{"a":1,"signatures":{}}"#);
+    }
+
+    #[test]
+    fn verify() {
+        let b = r#"{"signatures": {"Alice": {"ed25519:zxcvb": "hvA+XXFEkHk80pLMeIYjNkWy5Ds2ZckSrvj00NvbyFJQe3H9LuJNnu8JLZ/ffIzChs3HmhwPldO0MSmyJAYpCA"}}, "my_key": "my_data"}"#;
+
+        #[derive(Debug, Deserialize, PartialEq, Eq)]
+        struct Test {
+            my_key: String,
+        };
+
+        let s: Signed<Test> = serde_json::from_str(b).unwrap();
+
+        assert_eq!(
+            s.as_ref(),
+            &Test {
+                my_key: "my_data".into()
+            }
+        );
+
+        let k = b"qA\xeb\xc2^+(\\~P\x91(\xa4\xf4L\x1f\xeb\x07E\xae\x8b#q(\rMq\xf2\xc9\x8f\xe1\xca";
+        let seed = sign::Seed::from_slice(k).unwrap();
+        let (pubkey, _) = sign::keypair_from_seed(&seed);
+
+        let sig = &s.signatures["Alice"]["ed25519:zxcvb"];
+
+        assert!(sign::verify_detached(
+            sig.as_ref(),
+            s.get_canonical().as_bytes(),
+            &pubkey
+        ));
+    }
+
+    #[test]
+    fn sign() {
+        #[derive(Debug, Serialize, PartialEq, Eq)]
+        struct Test {
+            my_key: String,
+        };
+
+        let mut s: Signed<Test, serde_json::value::Value> =
+            Signed::wrap(Test {
+                my_key: "my_data".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            s.as_ref(),
+            &Test {
+                my_key: "my_data".into()
+            }
+        );
+
+        let k = b"qA\xeb\xc2^+(\\~P\x91(\xa4\xf4L\x1f\xeb\x07E\xae\x8b#q(\rMq\xf2\xc9\x8f\xe1\xca";
+        let seed = sign::Seed::from_slice(k).unwrap();
+        let (_, privkey) = sign::keypair_from_seed(&seed);
+
+        let sig = sign::sign_detached(s.get_canonical().as_bytes(), &privkey);
+        s.signatures
+            .entry("Alice".to_string())
+            .or_default()
+            .insert("ed25519:zxcvb".to_string(), Base64Signature(sig));
+
+        let b = r#"{"my_key":"my_data","signatures":{"Alice":{"ed25519:zxcvb":"hvA+XXFEkHk80pLMeIYjNkWy5Ds2ZckSrvj00NvbyFJQe3H9LuJNnu8JLZ/ffIzChs3HmhwPldO0MSmyJAYpCA"}}}"#;
+        assert_eq!(serde_json::to_string(&s).unwrap(), b);
     }
 }
