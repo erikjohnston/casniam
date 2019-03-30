@@ -13,11 +13,7 @@ use serde::Serialize;
 
 use serde_json::Error;
 
-// #[derive(Serialize)]
-// #[serde(bound(serialize = "V: Serialize, U: Serialize"))]
-// #[serde(bound(deserialize = "V: DeserializeOwned, U: Deserialize<'de> + Default"))]
 pub struct Signed<V, U = IgnoredAny> {
-    // #[serde(flatten)]
     value: Canonical<V>,
 
     signatures: BTreeMap<String, BTreeMap<String, Base64Signature>>,
