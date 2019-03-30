@@ -43,21 +43,27 @@ where
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct A<B> {
-            signatures: BTreeMap<String, BTreeMap<String, Base64Signature>>,
-            #[serde(default)]
-            unsigned: B,
-        }
+        let mut value = serde_json::Value::deserialize(deserializer)?;
 
-        let value = Canonical::deserialize(deserializer)?;
-        let sigs: A<U> = serde_json::from_str(value.get_str())
+        let map = value.as_object_mut().unwrap();
+
+        let raw_sigs = map.remove("signatures").unwrap_or_default();
+        let raw_unsigned = map.remove("unsigned").unwrap_or_default();
+
+        let sigs: BTreeMap<String, BTreeMap<String, Base64Signature>> =
+            serde_json::from_value(raw_sigs)
+                .map_err(serde::de::Error::custom)?;
+
+        let unsigned: U = serde_json::from_value(raw_unsigned)
             .map_err(serde::de::Error::custom)?;
 
+        let canonical =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+
         Ok(Signed {
-            value,
-            signatures: sigs.signatures,
-            unsigned: sigs.unsigned,
+            value: canonical,
+            signatures: sigs,
+            unsigned: unsigned,
         })
     }
 }
@@ -132,12 +138,6 @@ impl<'de> serde::Deserialize<'de> for Base64Signature {
         let sig = Signature::from_slice(&slice)
             .ok_or_else(|| D::Error::custom("signature incorrect length"))?;
 
-        // let sig = de_string
-        //     .from_base64()
-        //     .ok()
-        //     .and_then(|slice| Signature::from_slice(&slice))
-        //     .ok_or_else(|| D::Error::invalid_value(Unexpected::Str(&de_string), &"Invalid signature"))?;
-
         Ok(Base64Signature(sig))
     }
 }
@@ -187,6 +187,7 @@ mod tests {
 
         assert_eq!(s.value.as_ref(), &A { a: 1 });
         assert_eq!(s.signatures.len(), 0);
+        assert_eq!(s.value.get_canonical().unwrap(), br#"{"a":1,"b":2}"#);
     }
 
     #[test]

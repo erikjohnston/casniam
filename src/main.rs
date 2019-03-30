@@ -10,7 +10,7 @@ extern crate prettytable;
 use prettytable::Table;
 
 pub mod json;
-mod protocol;
+pub mod protocol;
 pub mod state_map;
 
 use serde::de::IgnoredAny;
