@@ -34,6 +34,18 @@ where
     }
 }
 
+impl<V, U> AsRef<V> for Signed<V, U> {
+    fn as_ref(&self) -> &V {
+        self.value.as_ref()
+    }
+}
+
+impl<V, U> Signed<V, U> {
+    pub fn get_canonical(&self) -> &str {
+        self.value.get_canonical()
+    }
+}
+
 impl<'de, V, U> Deserialize<'de> for Signed<V, U>
 where
     V: DeserializeOwned,
@@ -187,7 +199,7 @@ mod tests {
 
         assert_eq!(s.value.as_ref(), &A { a: 1 });
         assert_eq!(s.signatures.len(), 0);
-        assert_eq!(s.value.get_canonical().unwrap(), br#"{"a":1,"b":2}"#);
+        assert_eq!(s.value.get_canonical(), r#"{"a":1,"b":2}"#);
     }
 
     #[test]

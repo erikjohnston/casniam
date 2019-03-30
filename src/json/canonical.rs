@@ -1,4 +1,4 @@
-use serde::de::{Deserialize, DeserializeOwned, Deserializer};
+use serde::de::{Deserialize, DeserializeOwned, Deserializer, Error as _};
 use serde::ser::{Serialize, Serializer};
 use serde_json::error::Error;
 use serde_json::value::RawValue;
@@ -14,30 +14,18 @@ where
     V: Serialize,
 {
     pub fn wrap(value: V) -> Result<Canonical<V>, Error> {
-        let raw_value = RawValue::from_string(serde_json::to_string(&value)?)?;
+        let val: serde_json::Value = serde_json::to_value(&value)?;
+
+        let uncompact = serde_json::to_vec(&val)?;
+        let raw_value = make_canonical(&uncompact)?;
 
         Ok(Canonical { value, raw_value })
     }
 }
 
 impl<V> Canonical<V> {
-    pub fn get_str(&self) -> &str {
+    pub fn get_canonical(&self) -> &str {
         self.raw_value.get()
-    }
-
-    pub fn get_canonical(&self) -> Result<Vec<u8>, Error> {
-        // TODO: This is quite an inefficient way of canonicalising json
-
-        let val: serde_json::Value = serde_json::to_value(self)?;
-
-        // TODO: Assumes BTreeMap is serialized in key order
-        let uncompact = serde_json::to_vec(&val)?;
-
-        let mut new_vec = Vec::with_capacity(uncompact.len());
-        indolentjson::compact::compact(&uncompact, &mut new_vec)
-            .expect("Invalid JSON");
-
-        Ok(new_vec)
     }
 }
 
@@ -65,11 +53,26 @@ where
         D: Deserializer<'de>,
     {
         let raw_value = Box::<RawValue>::deserialize(deserializer)?;
+
+        let raw_value = make_canonical(raw_value.get().as_bytes())
+            .map_err(serde::de::Error::custom)?;
+
         let value = serde_json::from_str(raw_value.get())
             .map_err(serde::de::Error::custom)?;
 
         Ok(Canonical { value, raw_value })
     }
+}
+
+fn make_canonical(uncompact: &[u8]) -> Result<Box<RawValue>, Error> {
+    let mut canonical = Vec::with_capacity(uncompact.len());
+    indolentjson::compact::compact(uncompact, &mut canonical)
+        .expect("Invalid JSON");
+
+    let canonical =
+        String::from_utf8(canonical).map_err(|e| Error::custom(e))?;
+
+    RawValue::from_string(canonical)
 }
 
 #[cfg(test)]
@@ -105,6 +108,6 @@ mod tests {
 
         let s = serde_json::to_string(&c).unwrap();
 
-        assert_eq!(&s, r#"{"a": 2, "b": 3}"#);
+        assert_eq!(&s, r#"{"a":2,"b":3}"#);
     }
 }
