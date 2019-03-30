@@ -139,7 +139,7 @@ impl EventStore for DummyStore {
     }
 }
 
-fn main() {
+pub fn main_old() {
     let evs = vec![
         r#"{"auth_events": [["$1551018411312bOlzG:jki.re", {"sha256": "WwWVw1M3pyKlOWOj9OTeSR0dIXPFYttqAefJH5cr57g"}], ["$1551018411313fejqG:jki.re", {"sha256": "SoWbVs0mf21GfpgjXxyi8Es3qnfvUzNt7gK55/Mu2Yg"}], ["$1551018411314oxMbu:jki.re", {"sha256": "j5OeKDtiq+j8FLdthUy61ULqEc6Efwgm/tHdGV+zUSc"}]], "prev_events": [["$1551018411314oxMbu:jki.re", {"sha256": "j5OeKDtiq+j8FLdthUy61ULqEc6Efwgm/tHdGV+zUSc"}]], "type": "m.room.join_rules", "room_id": "!cjExvKHhAErxzYQmhV:jki.re", "sender": "@erikj:jki.re", "content": {"join_rule": "invite"}, "depth": 4, "prev_state": [], "state_key": "", "event_id": "$1551018411315nZGTA:jki.re", "origin": "jki.re", "origin_server_ts": 1551018411889, "hashes": {"sha256": "OVPGJh0Rs/LGJo1L/bYgmIqEQ69fHeqrzsRBlgvRZMk"}, "signatures": {"jki.re": {"ed25519:auto": "X0mHY60sqzDNCavu7wfvhB+up4oMNBq5RqiUYKHBwR/hq8fR8dAfr5fH8gfztVDEvoDWI+fRNtxH1c+/vwaNDQ"}}, "unsigned": {"age_ts": 1551018411889}}"#,
         r#"{"auth_events": [["$1551018411312bOlzG:jki.re", {"sha256": "WwWVw1M3pyKlOWOj9OTeSR0dIXPFYttqAefJH5cr57g"}], ["$1551018411313fejqG:jki.re", {"sha256": "SoWbVs0mf21GfpgjXxyi8Es3qnfvUzNt7gK55/Mu2Yg"}]], "prev_events": [["$1551018411313fejqG:jki.re", {"sha256": "SoWbVs0mf21GfpgjXxyi8Es3qnfvUzNt7gK55/Mu2Yg"}]], "type": "m.room.power_levels", "room_id": "!cjExvKHhAErxzYQmhV:jki.re", "sender": "@erikj:jki.re", "content": {"users": {"@erikj:jki.re": 100}, "users_default": 0, "events": {"m.room.name": 50, "m.room.power_levels": 100, "m.room.history_visibility": 100, "m.room.canonical_alias": 50, "m.room.avatar": 50}, "events_default": 0, "state_default": 50, "ban": 50, "kick": 50, "redact": 50, "invite": 0}, "depth": 3, "prev_state": [], "state_key": "", "event_id": "$1551018411314oxMbu:jki.re", "origin": "jki.re", "origin_server_ts": 1551018411628, "hashes": {"sha256": "Ih9qMvmYK8gFjLk7U75Kl/yjuXEijxCJBXPeq06mqRY"}, "signatures": {"jki.re": {"ed25519:auto": "EpYgdscDn9BT3YX8ywjMCW/SS39xESfLqPUDSHnS4aUtND2KG7bdjQtriiQsqzfKUTTKyPRiLPdHcyyC96PbBA"}}, "unsigned": {"age_ts": 1551018411628}}"#,
@@ -189,4 +189,30 @@ fn main() {
 
         table.printstd();
     }
+}
+
+use actix_web::{server, App, HttpRequest, HttpResponse};
+use sodiumoxide::crypto::sign;
+use std::collections::BTreeMap;
+
+fn render_server_keys(_req: &HttpRequest) -> HttpResponse {
+    let (pubkey, seckey) = sign::gen_keypair();
+
+    let mut verify_keys = BTreeMap::new();
+    verify_keys.insert("ed25519:test".to_string(), (pubkey, seckey));
+
+    let keys = protocol::server_keys::make_server_keys(
+        "example.com".to_string(),
+        verify_keys,
+        BTreeMap::new(),
+    );
+
+    HttpResponse::Ok().json(keys)
+}
+
+fn main() {
+    server::new(|| App::new().resource("/", |r| r.f(render_server_keys)))
+        .bind("127.0.0.1:8088")
+        .unwrap()
+        .run();
 }

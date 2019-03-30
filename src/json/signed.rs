@@ -2,18 +2,16 @@ use super::canonical::Canonical;
 
 use std::collections::BTreeMap;
 
-use sodiumoxide::crypto::sign::Signature;
+use sodiumoxide::crypto::sign::{sign_detached, SecretKey, Signature};
 
 use serde;
-use serde::de::{
-    Deserialize, DeserializeOwned, Deserializer, Error as _, IgnoredAny,
-};
+use serde::de::{Deserialize, DeserializeOwned, Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::Serialize;
 
-use serde_json::Error;
+use serde_json::{Error, Value};
 
-pub struct Signed<V, U = IgnoredAny> {
+pub struct Signed<V, U = Value> {
     value: Canonical<V>,
 
     signatures: BTreeMap<String, BTreeMap<String, Base64Signature>>,
@@ -31,6 +29,21 @@ where
             signatures: BTreeMap::new(),
             unsigned: U::default(),
         })
+    }
+}
+
+impl<V, U> Signed<V, U> {
+    pub fn sign(
+        &mut self,
+        server_name: String,
+        key_name: String,
+        key: &SecretKey,
+    ) {
+        let sig = sign_detached(self.get_canonical().as_bytes(), key);
+        self.signatures
+            .entry(server_name)
+            .or_default()
+            .insert(key_name, Base64Signature(sig));
     }
 }
 

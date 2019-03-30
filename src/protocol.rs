@@ -9,6 +9,7 @@ use failure::Error;
 
 use crate::state_map::StateMap;
 
+pub mod server_keys;
 pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {
