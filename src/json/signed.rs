@@ -95,7 +95,6 @@ where
 
 impl<V, U> Serialize for Signed<V, U>
 where
-    V: Serialize,
     U: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
