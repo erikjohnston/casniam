@@ -21,6 +21,9 @@ use failure::Error;
 use futures::executor::block_on;
 use futures::{future, Future, FutureExt};
 
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+
 use crate::protocol::v1::{auth, EventV1};
 use crate::protocol::{
     DagChunkFragment, Event, EventStore, Handler, RoomState, RoomVersion,
@@ -196,10 +199,13 @@ use sodiumoxide::crypto::sign;
 use std::collections::BTreeMap;
 
 fn render_server_keys(_req: &HttpRequest) -> HttpResponse {
+    // For now just generate a random key each time.
     let (pubkey, seckey) = sign::gen_keypair();
+    let key_name: String =
+        thread_rng().sample_iter(&Alphanumeric).take(5).collect();
 
     let mut verify_keys = BTreeMap::new();
-    verify_keys.insert("ed25519:test".to_string(), (pubkey, seckey));
+    verify_keys.insert(format!("ed25519:{}", key_name), (pubkey, seckey));
 
     let keys = protocol::server_keys::make_server_keys(
         "example.com".to_string(),

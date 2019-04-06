@@ -9,6 +9,8 @@ use failure::Error;
 
 use crate::state_map::StateMap;
 
+pub mod events;
+pub mod json;
 pub mod server_keys;
 pub mod v1;
 
