@@ -1,9 +1,9 @@
 use crate::json::signed::Signed;
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct EventV2 {
     auth_events: Vec<String>,
-    content: serde_json::Value,
+    content: serde_json::Map<String, serde_json::Value>,
     depth: u64,
     hashes: EventHash,
     origin: String,
@@ -23,7 +23,7 @@ impl EventV2 {
         &self.auth_events
     }
 
-    pub fn content(&self) -> &serde_json::Value {
+    pub fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.content
     }
 
@@ -66,8 +66,11 @@ impl EventV2 {
 
 impl SignedEventV2 {}
 
-pub fn redact(event: SignedEventV2) -> SignedEventV2 {
-    let val = serde_json::to_value(event).unwrap();
+pub fn redact(event: SignedEventV2) -> Result<SignedEventV2, serde_json::Error> {
+    let etype = event.as_ref().event_type().to_string();
+    let mut content = event.as_ref().content.clone();
+
+    let val = serde_json::to_value(event)?;
 
     let allowed_keys = [
         "event_id",
@@ -89,16 +92,13 @@ pub fn redact(event: SignedEventV2) -> SignedEventV2 {
 
     let val = match val {
         serde_json::Value::Object(obj) => obj,
-        _ => panic!("asdas"),
+        _ => unreachable!(),  // Events always serialize to an object
     };
 
     let mut val: serde_json::Map<_, _> = val
         .into_iter()
         .filter(|(k, _)| allowed_keys.contains(&(k as &str)))
         .collect();
-
-    let etype = val["type"].as_str().unwrap().to_string();
-    let content = val.get_mut("content").unwrap().as_object_mut().unwrap();
 
     let mut new_content = serde_json::Map::new();
 
@@ -136,11 +136,10 @@ pub fn redact(event: SignedEventV2) -> SignedEventV2 {
         serde_json::Value::Object(new_content),
     );
 
-    // TODO: Error handling and copying unsigned/signatures.
-    serde_json::from_value(serde_json::Value::Object(val)).unwrap()
+    serde_json::from_value(serde_json::Value::Object(val))
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum EventHash {
     #[serde(rename = "sha256")]
     Sha256(String),
@@ -190,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_redact() {
-        let json = r#"{
+        let full_json = r#"{
             "auth_events": ["$VwZY3if3+/rKgEzJMyjVaDeQFs0xLzph6sGjHEzLn2E", "$VnU0XEK6VPvVIF2dYia3VEM4geCQ/crydE3oMUbkgzg", "$Rk6ptuAGr5qZt7qmRbHdn8OFjwWAcXqL9rUwH576pYE"],
             "content": {"body": "ok :)", "msgtype": "m.text"},
             "depth": 6555,
@@ -206,8 +205,27 @@ mod tests {
             "unsigned": {"age_ts": 1554477158528}
         }"#;
 
-        let event: SignedEventV2 = serde_json::from_str(json).unwrap();
+        let redacted_json = r#"{
+            "auth_events": ["$VwZY3if3+/rKgEzJMyjVaDeQFs0xLzph6sGjHEzLn2E", "$VnU0XEK6VPvVIF2dYia3VEM4geCQ/crydE3oMUbkgzg", "$Rk6ptuAGr5qZt7qmRbHdn8OFjwWAcXqL9rUwH576pYE"],
+            "content": {},
+            "depth": 6555,
+            "hashes": {"sha256": "of2ROvFl+BuX8KeRJV759pLPGQRdrL85a5NWnuRBBos"},
+            "origin": "matrix.org",
+            "origin_server_ts": 1554477158528,
+            "prev_events": ["$YVjEKxL4rRhjLnTV4rXn8x+Df582SxEWzDwLsbZ8Za4"],
+            "prev_state": [],
+            "room_id": "!zVpPeWAObqutioiNzB:jki.re",
+            "sender": "@dave:matrix.org",
+            "type": "m.room.message",
+            "signatures": {"matrix.org": {"ed25519:auto": "9wuGBfX5D1E8RZtO1OX5mqcqWZ9yJEUwlhyHyCZyGBc+ONiW/NwqrQAPVNcGfgjbbTYZZhgz6/gyUe4VdOGHCg"}}
+        }"#;
 
-        redact(event);
+        let event: SignedEventV2 = serde_json::from_str(full_json).unwrap();
+
+        let redacted = redact(event).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(redacted_json).unwrap(),
+            serde_json::to_value(redacted).unwrap(),
+        );
     }
 }

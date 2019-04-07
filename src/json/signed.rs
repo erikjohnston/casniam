@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use serde_json::{Error, Value};
 
+#[derive(Clone)]
 pub struct Signed<V, U = Value> {
     value: Canonical<V>,
 
