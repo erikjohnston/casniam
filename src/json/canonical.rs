@@ -71,7 +71,7 @@ fn make_canonical(uncompact: &[u8]) -> Result<Box<RawValue>, Error> {
         .expect("Invalid JSON");
 
     let canonical =
-        String::from_utf8(canonical).map_err(|e| Error::custom(e))?;
+        String::from_utf8(canonical).map_err(Error::custom)?;
 
     RawValue::from_string(canonical)
 }

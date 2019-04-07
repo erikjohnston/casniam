@@ -76,7 +76,7 @@ where
         let raw_sigs = map.remove("signatures").unwrap_or_default();
         let raw_unsigned = map.remove("unsigned").unwrap_or_default();
 
-        let sigs: BTreeMap<String, BTreeMap<String, Base64Signature>> =
+        let signatures: BTreeMap<String, BTreeMap<String, Base64Signature>> =
             serde_json::from_value(raw_sigs)
                 .map_err(serde::de::Error::custom)?;
 
@@ -88,8 +88,8 @@ where
 
         Ok(Signed {
             value: canonical,
-            signatures: sigs,
-            unsigned: unsigned,
+            signatures,
+            unsigned,
         })
     }
 }

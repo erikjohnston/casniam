@@ -177,7 +177,7 @@ pub fn main_old() {
     }
 
     if let Some(state) = last_state {
-        println!("");
+        println!();
 
         let mut table = Table::new();
         table.set_format(

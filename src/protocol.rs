@@ -53,7 +53,7 @@ pub trait AuthRules {
     type Event: Event;
     type State: RoomState;
 
-    fn check<'a>(
+    fn check(
         e: &Self::Event,
         s: &Self::State,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
@@ -259,7 +259,7 @@ fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
             .map(|e| (e.get_event_id().to_string(), e))
             .collect();
 
-        for (_, event) in &event_map {
+        for event in event_map.values() {
             for prev_event_id in &event.get_prev_event_ids() {
                 if event_map.contains_key(prev_event_id as &str) {
                     graph.add_edge(event.get_event_id(), prev_event_id, 0);
@@ -294,7 +294,7 @@ fn get_missing<'a>(
         .map(|e| (e.get_event_id().to_string(), e))
         .collect();
 
-    for (_, event) in &event_map {
+    for event in event_map.values() {
         for prev_event_id in &event.get_prev_event_ids() {
             if !event_map.contains_key(prev_event_id as &str) {
                 missing.insert(prev_event_id.to_string());
