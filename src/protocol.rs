@@ -57,6 +57,8 @@ pub trait AuthRules {
         e: &Self::Event,
         s: &Self::State,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
+
+    fn auth_types_for_event(event: & Self::Event) -> Vec<(String, String)>;
 }
 
 pub trait RoomVersion {
@@ -457,6 +459,10 @@ mod tests {
             _s: &Self::State,
         ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
             Box::pin(future::ok(()))
+        }
+
+        fn auth_types_for_event(_event: & Self::Event) -> Vec<(String, String)> {
+            unimplemented!()
         }
     }
 

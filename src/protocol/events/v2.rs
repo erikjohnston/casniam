@@ -19,6 +19,38 @@ pub struct EventV2 {
 pub type SignedEventV2 = Signed<EventV2>;
 
 impl EventV2 {
+    pub fn from_builder(builder: super::EventBuilder) -> Self {
+        let super::EventBuilder {
+            event_type,
+            state_key,
+            sender,
+            content,
+            origin,
+            origin_server_ts,
+            room_id,
+        } = builder;
+
+        // TODO: Fetch auth types for event
+        // TODO: Get state for event for auth
+        // TODO: Get prev events
+        // TODO: Get depth
+
+        EventV2 {
+            content,
+            origin,
+            origin_server_ts,
+            room_id,
+            sender,
+            event_type,
+            state_key,
+
+            auth_events: Vec::new(),
+            depth: 0,
+            hashes: EventHash::Sha256("".to_string()),
+            prev_events: Vec::new(),
+        }
+    }
+
     pub fn auth_events(&self) -> &[String] {
         &self.auth_events
     }

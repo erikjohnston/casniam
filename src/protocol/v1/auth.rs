@@ -44,6 +44,10 @@ where
     ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
         Pin::from(Box::new(check(e.clone(), s.clone())))
     }
+
+    fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)> {
+        auth_types_for_event(event)
+    }
 }
 
 /// Check if the given event parses auth.
