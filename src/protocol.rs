@@ -58,7 +58,7 @@ pub trait AuthRules {
         s: &Self::State,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
 
-    fn auth_types_for_event(event: & Self::Event) -> Vec<(String, String)>;
+    fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)>;
 }
 
 pub trait RoomVersion {
@@ -76,9 +76,9 @@ pub trait EventStore {
         &self,
         event_ids: &[&str],
     ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
-    fn get_state_for<S: RoomState>(
+    fn get_state_for<S: RoomState, T: AsRef<str>>(
         &self,
-        event_ids: &[&str],
+        event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>>;
 }
 
@@ -461,7 +461,7 @@ mod tests {
             Box::pin(future::ok(()))
         }
 
-        fn auth_types_for_event(_event: & Self::Event) -> Vec<(String, String)> {
+        fn auth_types_for_event(_event: &Self::Event) -> Vec<(String, String)> {
             unimplemented!()
         }
     }
@@ -491,9 +491,9 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_state_for<S: RoomState>(
+        fn get_state_for<S: RoomState, T: AsRef<str>>(
             &self,
-            _event_ids: &[&str],
+            _event_ids: &[T],
         ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>> {
             unimplemented!()
         }

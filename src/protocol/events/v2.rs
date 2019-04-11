@@ -1,6 +1,9 @@
 use crate::json::signed::Signed;
 
-#[derive(Serialize, Deserialize, Clone)]
+use crate::protocol::{Event, EventStore, RoomVersion};
+use failure::Error;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EventV2 {
     auth_events: Vec<String>,
     content: serde_json::Map<String, serde_json::Value>,
@@ -19,7 +22,13 @@ pub struct EventV2 {
 pub type SignedEventV2 = Signed<EventV2>;
 
 impl EventV2 {
-    pub fn from_builder(builder: super::EventBuilder) -> Self {
+    pub async fn from_builder<
+        R: RoomVersion<Event = EventV2>,
+        E: EventStore,
+    >(
+        builder: super::EventBuilder,
+        event_store: &E,
+    ) -> Result<EventV2, Error> {
         let super::EventBuilder {
             event_type,
             state_key,
@@ -28,14 +37,18 @@ impl EventV2 {
             origin,
             origin_server_ts,
             room_id,
+            prev_events,
         } = builder;
 
-        // TODO: Fetch auth types for event
+        // Need RoomState version.
+        let state =
+            await!(event_store.get_state_for::<R::State, _>(&prev_events))?;
+
+        // R::Auth::auth_types_for_event()
         // TODO: Get state for event for auth
-        // TODO: Get prev events
         // TODO: Get depth
 
-        EventV2 {
+        Ok(EventV2 {
             content,
             origin,
             origin_server_ts,
@@ -48,7 +61,7 @@ impl EventV2 {
             depth: 0,
             hashes: EventHash::Sha256("".to_string()),
             prev_events: Vec::new(),
-        }
+        })
     }
 
     pub fn auth_events(&self) -> &[String] {
@@ -96,9 +109,20 @@ impl EventV2 {
     }
 }
 
+impl Event for EventV2 {
+    fn get_prev_event_ids(&self) -> Vec<&str> {
+        self.prev_events().iter().map(|s| s as &str).collect()
+    }
+    fn get_event_id(&self) -> &str {
+        "" // FIXME
+    }
+}
+
 impl SignedEventV2 {}
 
-pub fn redact(event: SignedEventV2) -> Result<SignedEventV2, serde_json::Error> {
+pub fn redact(
+    event: SignedEventV2,
+) -> Result<SignedEventV2, serde_json::Error> {
     let etype = event.as_ref().event_type().to_string();
     let mut content = event.as_ref().content.clone();
 
@@ -124,7 +148,7 @@ pub fn redact(event: SignedEventV2) -> Result<SignedEventV2, serde_json::Error> 
 
     let val = match val {
         serde_json::Value::Object(obj) => obj,
-        _ => unreachable!(),  // Events always serialize to an object
+        _ => unreachable!(), // Events always serialize to an object
     };
 
     let mut val: serde_json::Map<_, _> = val
@@ -171,7 +195,7 @@ pub fn redact(event: SignedEventV2) -> Result<SignedEventV2, serde_json::Error> 
     serde_json::from_value(serde_json::Value::Object(val))
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum EventHash {
     #[serde(rename = "sha256")]
     Sha256(String),

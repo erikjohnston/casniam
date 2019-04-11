@@ -70,8 +70,7 @@ fn make_canonical(uncompact: &[u8]) -> Result<Box<RawValue>, Error> {
     indolentjson::compact::compact(uncompact, &mut canonical)
         .expect("Invalid JSON");
 
-    let canonical =
-        String::from_utf8(canonical).map_err(Error::custom)?;
+    let canonical = String::from_utf8(canonical).map_err(Error::custom)?;
 
     RawValue::from_string(canonical)
 }

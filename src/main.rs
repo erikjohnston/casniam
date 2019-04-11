@@ -134,9 +134,9 @@ impl EventStore for DummyStore {
         unimplemented!()
     }
 
-    fn get_state_for<S: RoomState>(
+    fn get_state_for<S: RoomState, T: AsRef<str>>(
         &self,
-        _event_ids: &[&str],
+        _event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>> {
         unimplemented!()
     }
