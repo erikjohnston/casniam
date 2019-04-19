@@ -30,11 +30,10 @@ pub trait RoomState: Clone {
 
     fn add_event<'a>(&mut self, event: &'a Self::Event);
 
-    // fn get_event_id(
-    //     &self,
-    //     etype: &str,
-    //     state_key: &str,
-    // ) -> Pin<Box<Future<Output = Result<Option<String>, Error>>>>;
+    fn get_event_ids(
+        &self,
+        types: impl IntoIterator<Item = (String, String)>,
+    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
 
     // fn get_event(
     //     &self,
@@ -74,8 +73,9 @@ pub trait EventStore {
     ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
     fn get_events<E: Event>(
         &self,
-        event_ids: &[&str],
+        event_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
+
     fn get_state_for<S: RoomState, T: AsRef<str>>(
         &self,
         event_ids: &[T],
@@ -439,6 +439,13 @@ mod tests {
         //     unimplemented!()
         // }
 
+        fn get_event_ids(
+            &self,
+            _types: impl IntoIterator<Item = (String, String)>,
+        ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
+            unimplemented!()
+        }
+
         fn get_types(
             &self,
             _types: impl IntoIterator<Item = (String, String)>,
@@ -486,7 +493,7 @@ mod tests {
 
         fn get_events<E: Event>(
             &self,
-            _event_ids: &[&str],
+            _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
         ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
             unimplemented!()
         }

@@ -1,7 +1,12 @@
 use crate::json::signed::Signed;
 
-use crate::protocol::{Event, EventStore, RoomVersion};
+use crate::protocol::json::serialize_canonically_remove_fields;
+use crate::protocol::{AuthRules, Event, EventStore, RoomState, RoomVersion};
+
+use base64;
 use failure::Error;
+use sha2::{Digest, Sha256};
+use std::cmp::max;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EventV2 {
@@ -40,15 +45,7 @@ impl EventV2 {
             prev_events,
         } = builder;
 
-        // Need RoomState version.
-        let state =
-            await!(event_store.get_state_for::<R::State, _>(&prev_events))?;
-
-        // R::Auth::auth_types_for_event()
-        // TODO: Get state for event for auth
-        // TODO: Get depth
-
-        Ok(EventV2 {
+        let mut event = EventV2 {
             content,
             origin,
             origin_server_ts,
@@ -57,11 +54,45 @@ impl EventV2 {
             event_type,
             state_key,
 
+            // We set the following attributes later
             auth_events: Vec::new(),
             depth: 0,
             hashes: EventHash::Sha256("".to_string()),
             prev_events: Vec::new(),
-        })
+        };
+
+        let auth_types = R::Auth::auth_types_for_event(&event);
+
+        // TODO: Only pull out a subset of the state needed.
+        let state =
+            await!(event_store.get_state_for::<R::State, _>(&prev_events))?
+                .ok_or_else(|| {
+                    format_err!("No state for prev events: {:?}", &prev_events)
+                })?;
+
+        let auth_events = await!(state.get_event_ids(auth_types))?;
+
+        let mut depth = 0;
+        let evs: Vec<EventV2> = await!(event_store.get_events(&prev_events))?;
+        for ev in evs {
+            depth = max(ev.depth, depth);
+        }
+
+        event.depth = depth;
+        event.auth_events = auth_events;
+        event.prev_events = prev_events;
+
+        let serialized =
+            serialize_canonically_remove_fields(event.clone(), &["hashes"])?;
+
+        let computed_hash = Sha256::digest(&serialized);
+
+        event.hashes = EventHash::Sha256(base64::encode_config(
+            &computed_hash,
+            base64::STANDARD_NO_PAD,
+        ));
+
+        Ok(event)
     }
 
     pub fn auth_events(&self) -> &[String] {

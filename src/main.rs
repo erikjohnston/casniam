@@ -52,10 +52,25 @@ impl RoomState for StateMap<V1Event> {
         }
     }
 
+    fn get_event_ids(
+        &self,
+        types: impl IntoIterator<Item = (String, String)>,
+    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
+        future::ok(
+            types
+                .into_iter()
+                .filter_map(|(t, s)| self.get(&t, &s))
+                .map(|e| e.event_id.clone())
+                .collect(),
+        )
+        .boxed()
+    }
+
     fn get_types(
         &self,
         _types: impl IntoIterator<Item = (String, String)>,
     ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>> {
+        // FIXME
         future::ok(self.clone()).boxed()
     }
 }
@@ -129,7 +144,7 @@ impl EventStore for DummyStore {
 
     fn get_events<E: Event>(
         &self,
-        _event_ids: &[&str],
+        _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
         unimplemented!()
     }
