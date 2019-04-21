@@ -25,22 +25,19 @@ pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
 }
 
 #[derive(Default)]
-pub struct AuthV1<E, S> {
+pub struct AuthV1<E> {
     e: PhantomData<E>,
-    s: PhantomData<S>,
 }
 
-impl<E, S> AuthRules for AuthV1<E, S>
+impl<E> AuthRules for AuthV1<E>
 where
     E: EventV1 + 'static,
-    S: RoomState<Event = E> + Clone + fmt::Debug + 'static,
 {
     type Event = E;
-    type State = S;
 
     fn check<'a>(
         e: &'a Self::Event,
-        s: &'a Self::State,
+        s: &'a impl RoomState,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
         Pin::from(Box::new(check(e.clone(), s.clone())))
     }
@@ -54,7 +51,7 @@ where
 pub async fn check<'a, E, S>(event: E, state: S) -> Result<(), Error>
 where
     E: EventV1 + Clone + fmt::Debug,
-    S: RoomState<Event = E> + Clone + fmt::Debug,
+    S: RoomState + Clone + fmt::Debug,
 {
     let types = auth_types_for_event(&event);
     let auth_events = await!(state.get_types(types))?;

@@ -12,6 +12,7 @@ use prettytable::Table;
 pub mod json;
 pub mod protocol;
 pub mod state_map;
+pub mod stores;
 
 use serde::de::IgnoredAny;
 
@@ -26,30 +27,34 @@ use rand::{thread_rng, Rng};
 
 use crate::protocol::v1::{auth, EventV1};
 use crate::protocol::{
-    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomVersion,
+    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomVersion, RoomStateResolver,
 };
 use crate::state_map::StateMap;
 
-impl RoomState for StateMap<V1Event> {
-    type Event = V1Event;
+pub struct DummyStateResolver;
 
-    fn resolve_state<'a>(
-        states: Vec<&'a Self>,
+impl RoomStateResolver for DummyStateResolver {
+    fn resolve_state<'a, S: RoomState>(
+        states: Vec<&'a S>,
         _store: &'a impl EventStore,
-    ) -> Pin<Box<Future<Output = Result<Self, Error>>>> {
+    ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
         let res = match states.len() {
-            0 => Self::new(),
+            0 => RoomState::new(),
             1 => states[0].clone(),
             _ => unimplemented!(),
         };
 
         future::ok(res).boxed()
     }
+}
 
-    fn add_event<'a>(&mut self, event: &'a Self::Event) {
-        if let Some(state_key) = event.get_state_key() {
-            self.insert(event.get_type(), state_key, event.clone());
-        }
+impl RoomState for StateMap<String> {
+    fn new() -> Self {
+        StateMap::new()
+    }
+
+    fn add_event<'a>(&mut self, etype: String, state_key: String, event_id: String) {
+        self.insert(etype, state_key, event_id);
     }
 
     fn get_event_ids(
@@ -69,7 +74,7 @@ impl RoomState for StateMap<V1Event> {
     fn get_types(
         &self,
         _types: impl IntoIterator<Item = (String, String)>,
-    ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>> {
+    ) -> Pin<Box<Future<Output = Result<StateMap<String>, Error>>>> {
         // FIXME
         future::ok(self.clone()).boxed()
     }
@@ -104,8 +109,8 @@ struct RoomVersionV1;
 
 impl RoomVersion for RoomVersionV1 {
     type Event = V1Event;
-    type State = StateMap<V1Event>;
-    type Auth = auth::AuthV1<Self::Event, Self::State>;
+    type State = DummyStateResolver;
+    type Auth = auth::AuthV1<Self::Event>;
 }
 
 impl EventV1 for V1Event {
@@ -136,8 +141,9 @@ struct DummyStore;
 
 impl EventStore for DummyStore {
     type Event = V1Event;
+    type RoomState = StateMap<V1Event>;
 
-    fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
+    fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         _event_ids: I,
     ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
@@ -151,10 +157,10 @@ impl EventStore for DummyStore {
         unimplemented!()
     }
 
-    fn get_state_for<S: RoomState, T: AsRef<str>>(
+    fn get_state_for<T: AsRef<str>>(
         &self,
         _event_ids: &[T],
-    ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>> {
+    ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
         unimplemented!()
     }
 }

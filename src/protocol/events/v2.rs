@@ -65,7 +65,7 @@ impl EventV2 {
 
         // TODO: Only pull out a subset of the state needed.
         let state =
-            await!(event_store.get_state_for::<R::State, _>(&prev_events))?
+            await!(event_store.get_state_for(&prev_events))?
                 .ok_or_else(|| {
                     format_err!("No state for prev events: {:?}", &prev_events)
                 })?;
@@ -73,7 +73,7 @@ impl EventV2 {
         let auth_events = await!(state.get_event_ids(auth_types))?;
 
         let mut depth = 0;
-        let evs: Vec<EventV2> = await!(event_store.get_events(&prev_events))?;
+        let evs = await!(event_store.get_events(&prev_events))?;
         for ev in evs {
             depth = max(ev.depth, depth);
         }
