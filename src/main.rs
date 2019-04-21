@@ -135,6 +135,8 @@ impl EventV1 for V1Event {
 struct DummyStore;
 
 impl EventStore for DummyStore {
+    type Event = V1Event;
+
     fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
         &self,
         _event_ids: I,
@@ -142,10 +144,10 @@ impl EventStore for DummyStore {
         unimplemented!()
     }
 
-    fn get_events<E: Event>(
+    fn get_events(
         &self,
         _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
+    ) -> Pin<Box<Future<Output = Result<Vec<V1Event>, Error>>>> {
         unimplemented!()
     }
 

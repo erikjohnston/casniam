@@ -67,16 +67,19 @@ pub trait RoomVersion {
 }
 
 pub trait EventStore {
+    type Event: Event;
+
     fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
         &self,
         event_ids: I,
     ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
-    fn get_events<E: Event>(
+
+    fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
+    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>;
 
-    fn get_state_for<S: RoomState, T: AsRef<str>>(
+    fn get_state_for<S: RoomState<Event = Self::Event>, T: AsRef<str>>(
         &self,
         event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>>;
@@ -105,7 +108,7 @@ impl<ES: EventStore> Handler<ES> {
         Handler { event_store }
     }
 
-    pub async fn handle_chunk<V: RoomVersion + 'static>(
+    pub async fn handle_chunk<V: RoomVersion<Event = ES::Event> + 'static>(
         &self,
         chunk: DagChunkFragment<V::Event>,
     ) -> Result<Vec<PersistEventInfo<V>>, Error> {
@@ -484,6 +487,8 @@ mod tests {
     struct DummyStore;
 
     impl EventStore for DummyStore {
+        type Event = TestEvent;
+
         fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
             &self,
             _event_ids: I,
@@ -491,10 +496,10 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_events<E: Event>(
+        fn get_events(
             &self,
             _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<TestEvent>, Error>>>> {
             unimplemented!()
         }
 

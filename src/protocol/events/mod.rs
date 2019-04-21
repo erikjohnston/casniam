@@ -59,7 +59,7 @@ impl EventBuilder {
 
     pub async fn build_v2<
         R: RoomVersion<Event = v2::EventV2>,
-        E: EventStore,
+        E: EventStore<Event = v2::EventV2>,
     >(
         self,
         event_store: &E,

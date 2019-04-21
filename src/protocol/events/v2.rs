@@ -29,7 +29,7 @@ pub type SignedEventV2 = Signed<EventV2>;
 impl EventV2 {
     pub async fn from_builder<
         R: RoomVersion<Event = EventV2>,
-        E: EventStore,
+        E: EventStore<Event = EventV2>,
     >(
         builder: super::EventBuilder,
         event_store: &E,
