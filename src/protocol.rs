@@ -7,8 +7,6 @@ use std::pin::Pin;
 
 use failure::Error;
 
-use crate::state_map::StateMap;
-
 pub mod events;
 pub mod json;
 pub mod server_keys;
@@ -29,10 +27,15 @@ pub trait RoomStateResolver {
     ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
 }
 
-pub trait RoomState: Clone {
-    fn new() -> RoomState;
+pub trait RoomState: Clone + 'static {
+    fn new() -> Self;
 
-    fn add_event<'a>(&mut self, etype: String, state_key: String, event_id: String);
+    fn add_event<'a>(
+        &mut self,
+        etype: String,
+        state_key: String,
+        event_id: String,
+    );
 
     fn get_event_ids(
         &self,
@@ -51,6 +54,7 @@ pub trait AuthRules {
     fn check(
         e: &Self::Event,
         s: &impl RoomState,
+        store: &impl EventStore<Event = Self::Event>,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
 
     fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)>;
@@ -62,7 +66,7 @@ pub trait RoomVersion {
     type Auth: AuthRules<Event = Self::Event>;
 }
 
-pub trait EventStore {
+pub trait EventStore: Clone + 'static {
     type Event: Event;
     type RoomState: RoomState;
 
@@ -105,7 +109,7 @@ impl<ES: EventStore> Handler<ES> {
         Handler { event_store }
     }
 
-    pub async fn handle_chunk<V: RoomVersion<Event=ES::Event> + 'static>(
+    pub async fn handle_chunk<V: RoomVersion<Event = ES::Event> + 'static>(
         &self,
         chunk: DagChunkFragment<V::Event>,
     ) -> Result<Vec<PersistEventInfo<V, ES::RoomState>>, Error> {
@@ -148,12 +152,20 @@ impl<ES: EventStore> Handler<ES> {
                 await!(V::State::resolve_state(states, &self.event_store))?;
 
             // FIXME: Differentiate between DB and auth errors.
-            let rejected =
-                await!(V::Auth::check(&event, &state_before)).is_err();
+            let rejected = await!(V::Auth::check(
+                &event,
+                &state_before,
+                &self.event_store
+            ))
+            .is_err();
 
             let mut state_after = state_before.clone();
             if let Some(state_key) = event.state_key() {
-                state_after.add_event(event.event_type().to_string(), state_key.to_string(), event.get_event_id().to_string());
+                state_after.add_event(
+                    event.event_type().to_string(),
+                    state_key.to_string(),
+                    event.get_event_id().to_string(),
+                );
             }
 
             persisted_state.push(PersistEventInfo {

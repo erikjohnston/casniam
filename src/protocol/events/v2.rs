@@ -64,11 +64,10 @@ impl EventV2 {
         let auth_types = R::Auth::auth_types_for_event(&event);
 
         // TODO: Only pull out a subset of the state needed.
-        let state =
-            await!(event_store.get_state_for(&prev_events))?
-                .ok_or_else(|| {
-                    format_err!("No state for prev events: {:?}", &prev_events)
-                })?;
+        let state = await!(event_store.get_state_for(&prev_events))?
+            .ok_or_else(|| {
+                format_err!("No state for prev events: {:?}", &prev_events)
+            })?;
 
         let auth_events = await!(state.get_event_ids(auth_types))?;
 
@@ -146,6 +145,14 @@ impl Event for EventV2 {
     }
     fn get_event_id(&self) -> &str {
         "" // FIXME
+    }
+
+    fn event_type(&self) -> &str {
+        &self.event_type
+    }
+
+    fn state_key(&self) -> Option<&str> {
+        self.state_key.as_ref().map(|e| e as &str)
     }
 }
 

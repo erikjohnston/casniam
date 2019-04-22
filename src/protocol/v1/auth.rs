@@ -1,4 +1,4 @@
-use crate::protocol::RoomState;
+use crate::protocol::{EventStore, RoomState};
 
 use std::fmt;
 
@@ -38,8 +38,9 @@ where
     fn check<'a>(
         e: &'a Self::Event,
         s: &'a impl RoomState,
+        store: &'a impl EventStore<Event = E>,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
-        Pin::from(Box::new(check(e.clone(), s.clone())))
+        Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
 
     fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)> {
@@ -48,13 +49,30 @@ where
 }
 
 /// Check if the given event parses auth.
-pub async fn check<'a, E, S>(event: E, state: S) -> Result<(), Error>
+pub async fn check<E, S>(
+    event: E,
+    state: S,
+    store: impl EventStore<Event = E>,
+) -> Result<(), Error>
 where
-    E: EventV1 + Clone + fmt::Debug,
-    S: RoomState + Clone + fmt::Debug,
+    E: EventV1 + Clone,
+    S: RoomState + Clone,
 {
     let types = auth_types_for_event(&event);
-    let auth_events = await!(state.get_types(types))?;
+    let auth_event_ids = await!(state.get_event_ids(types))?;
+
+    let auth_events_vec = await!(store.get_events(auth_event_ids))?;
+
+    let auth_events = auth_events_vec
+        .into_iter()
+        .filter_map(|ev| {
+            if let Some(state_key) = ev.state_key() {
+                Some(((ev.event_type().to_string(), state_key.to_string()), ev))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     Checker {
         event: &event,

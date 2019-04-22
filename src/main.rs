@@ -27,7 +27,8 @@ use rand::{thread_rng, Rng};
 
 use crate::protocol::v1::{auth, EventV1};
 use crate::protocol::{
-    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomVersion, RoomStateResolver,
+    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomStateResolver,
+    RoomVersion,
 };
 use crate::state_map::StateMap;
 
@@ -53,8 +54,13 @@ impl RoomState for StateMap<String> {
         StateMap::new()
     }
 
-    fn add_event<'a>(&mut self, etype: String, state_key: String, event_id: String) {
-        self.insert(etype, state_key, event_id);
+    fn add_event<'a>(
+        &mut self,
+        etype: String,
+        state_key: String,
+        event_id: String,
+    ) {
+        self.insert(&etype, &state_key, event_id);
     }
 
     fn get_event_ids(
@@ -65,7 +71,7 @@ impl RoomState for StateMap<String> {
             types
                 .into_iter()
                 .filter_map(|(t, s)| self.get(&t, &s))
-                .map(|e| e.event_id.clone())
+                .cloned()
                 .collect(),
         )
         .boxed()
@@ -102,6 +108,14 @@ impl Event for V1Event {
     fn get_event_id(&self) -> &str {
         &self.event_id
     }
+
+    fn event_type(&self) -> &str {
+        &self.etype
+    }
+
+    fn state_key(&self) -> Option<&str> {
+        self.state_key.as_ref().map(|e| e as &str)
+    }
 }
 
 #[derive(Debug)]
@@ -137,13 +151,17 @@ impl EventV1 for V1Event {
     }
 }
 
+#[derive(Clone)]
 struct DummyStore;
 
 impl EventStore for DummyStore {
     type Event = V1Event;
-    type RoomState = StateMap<V1Event>;
+    type RoomState = StateMap<String>;
 
-    fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+    fn missing_events<
+        'a,
+        I: IntoIterator<Item = impl AsRef<str> + ToString>,
+    >(
         &self,
         _event_ids: I,
     ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
@@ -210,7 +228,7 @@ pub fn main_old() {
         table.set_titles(row!["Type", "State Key", "Event ID"]);
 
         for ((t, s), e) in state.iter() {
-            table.add_row(row![t, s, e.get_event_id()]);
+            table.add_row(row![t, s, e]);
         }
 
         table.printstd();
