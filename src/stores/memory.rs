@@ -1,28 +1,29 @@
-use crate::protocol::{Event, EventStore, RoomState};
+use crate::protocol::{Event, EventStore, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
 
 use failure::Error;
 use futures::{future, Future, FutureExt};
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 #[derive(Default)]
-pub struct MemoryEventStoreInner<E: Clone + fmt::Debug> {
-    event_map: BTreeMap<String, E>,
-    state_map: BTreeMap<String, StateMap<E>>,
+pub struct MemoryEventStoreInner<R: RoomVersion> {
+    event_map: BTreeMap<String, R::Event>,
+    state_map: BTreeMap<String, StateMap<R::Event>>,
 }
 
-pub type MemoryEventStore<E: Clone + fmt::Debug> = Arc<Mutex<MemoryEventStoreInner<E>>>;
+pub type MemoryEventStore<R> = Arc<RwLock<MemoryEventStoreInner<R>>>;
 
-impl<E> EventStore for MemoryEventStore<E>
+impl<R> EventStore for MemoryEventStore<R>
 where
-    E: Event + 'static,
+    R: RoomVersion + 'static,
+    R::Event: 'static,
 {
-    type Event = E;
+    type Event = R::Event;
     type RoomState = StateMap<String>;
+    type RoomVersion = R;
 
     fn missing_events<
         'a,
@@ -31,7 +32,7 @@ where
         &self,
         event_ids: I,
     ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
-        let store = self.lock().expect("Mutex poisoned");
+        let store = self.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
@@ -46,8 +47,8 @@ where
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>> {
-        let store = self.lock().expect("Mutex poisoned");
+    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+        let store = self.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
@@ -63,6 +64,32 @@ where
         &self,
         event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
-        unimplemented!()
+        let mut states: Vec<Self::RoomState> =
+            Vec::with_capacity(event_ids.len());
+
+        {
+            let store = self.read().expect("Mutex poisoned");
+            for e_id in event_ids {
+                if let Some(state) = store.state_map.get(e_id.as_ref()) {
+                    let state_ids = state
+                        .iter()
+                        .map(|(k, e)| (k, e.get_event_id().to_string()))
+                        .collect();
+                    states.push(state_ids)
+                } else {
+                    // We don't have all the state.
+                    return future::ok(None).boxed();
+                }
+            }
+        }
+
+        let store = self.clone();
+
+        async move {
+            let state = await!(R::State::resolve_state(states, &store))?;
+
+            Ok(Some(state))
+        }
+            .boxed()
     }
 }

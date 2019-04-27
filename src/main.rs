@@ -16,6 +16,7 @@ pub mod stores;
 
 use serde::de::IgnoredAny;
 
+use std::borrow::Borrow;
 use std::pin::Pin;
 
 use failure::Error;
@@ -36,12 +37,12 @@ pub struct DummyStateResolver;
 
 impl RoomStateResolver for DummyStateResolver {
     fn resolve_state<'a, S: RoomState>(
-        states: Vec<&'a S>,
+        states: Vec<impl Borrow<S>>,
         _store: &'a impl EventStore,
     ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
         let res = match states.len() {
             0 => RoomState::new(),
-            1 => states[0].clone(),
+            1 => states[0].borrow().clone(),
             _ => unimplemented!(),
         };
 
@@ -157,6 +158,7 @@ struct DummyStore;
 impl EventStore for DummyStore {
     type Event = V1Event;
     type RoomState = StateMap<String>;
+    type RoomVersion = RoomVersionV1;
 
     fn missing_events<
         'a,

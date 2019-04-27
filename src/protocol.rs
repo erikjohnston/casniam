@@ -1,6 +1,7 @@
 use futures::future::Future;
 use petgraph::visit::Walker;
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::pin::Pin;
@@ -22,7 +23,7 @@ pub trait Event: Clone + fmt::Debug {
 
 pub trait RoomStateResolver {
     fn resolve_state<'a, S: RoomState>(
-        states: Vec<&'a S>,
+        states: Vec<impl Borrow<S>>,
         store: &'a impl EventStore,
     ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
 }
@@ -69,6 +70,7 @@ pub trait RoomVersion {
 pub trait EventStore: Clone + 'static {
     type Event: Event;
     type RoomState: RoomState;
+    type RoomVersion: RoomVersion<Event = Self::Event>;
 
     fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
@@ -148,7 +150,7 @@ impl<ES: EventStore> Handler<ES> {
                 .map(|e| &event_to_state[e as &str])
                 .collect();
 
-            let state_before =
+            let state_before: ES::RoomState =
                 await!(V::State::resolve_state(states, &self.event_store))?;
 
             // FIXME: Differentiate between DB and auth errors.
