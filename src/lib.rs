@@ -15,11 +15,8 @@ use std::pin::Pin;
 use failure::Error;
 use futures::{future, Future, FutureExt};
 
-use crate::protocol::{
-    RoomState,
-};
+use crate::protocol::RoomState;
 use crate::state_map::StateMap;
-
 
 impl RoomState for StateMap<String> {
     fn new() -> Self {

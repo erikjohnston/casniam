@@ -170,14 +170,14 @@ where
             if let Some(creation_event) =
                 self.auth_events.get("m.room.create", "")
             {
-                let prev_events = self.event.get_prev_event_ids();
+                let prev_events = self.event.prev_event_ids();
                 let single_prev_event_id = if prev_events.len() == 1 {
                     Some(prev_events[0])
                 } else {
                     None
                 };
 
-                if Some(creation_event.get_event_id()) == single_prev_event_id {
+                if Some(creation_event.event_id()) == single_prev_event_id {
                     let creator = creation_event
                         .get_content()
                         .get("creator")

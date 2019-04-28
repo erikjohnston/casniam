@@ -17,17 +17,17 @@ pub struct EventBuilder {
 
 impl EventBuilder {
     pub fn new(
-        room_id: String,
-        sender: String,
-        event_type: String,
-        state_key: Option<String>,
+        room_id: impl ToString,
+        sender: impl ToString,
+        event_type: impl ToString,
+        state_key: Option<impl ToString>,
     ) -> Self {
         EventBuilder {
-            origin: sender.clone(), // FIXME
-            sender,
-            event_type,
-            state_key,
-            room_id,
+            origin: sender.to_string(), // FIXME
+            sender: sender.to_string(),
+            event_type: event_type.to_string(),
+            state_key: state_key.map(|s| s.to_string()),
+            room_id: room_id.to_string(),
             prev_events: Vec::new(),
             content: serde_json::Map::new(),
             origin_server_ts: 0, // FIXME,
@@ -42,8 +42,8 @@ impl EventBuilder {
         self
     }
 
-    pub fn origin(&mut self, origin: String) -> &mut Self {
-        self.origin = origin;
+    pub fn origin(&mut self, origin: impl ToString) -> &mut Self {
+        self.origin = origin.to_string();
         self
     }
 

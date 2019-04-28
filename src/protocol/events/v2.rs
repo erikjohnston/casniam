@@ -140,10 +140,10 @@ impl EventV2 {
 }
 
 impl Event for EventV2 {
-    fn get_prev_event_ids(&self) -> Vec<&str> {
+    fn prev_event_ids(&self) -> Vec<&str> {
         self.prev_events().iter().map(|s| s as &str).collect()
     }
-    fn get_event_id(&self) -> &str {
+    fn event_id(&self) -> &str {
         "" // FIXME
     }
 

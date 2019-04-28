@@ -7,7 +7,6 @@ extern crate serde_derive;
 extern crate prettytable;
 use prettytable::Table;
 
-
 use serde::de::IgnoredAny;
 
 use std::borrow::Borrow;
@@ -59,11 +58,11 @@ struct V1Event {
 }
 
 impl Event for V1Event {
-    fn get_prev_event_ids(&self) -> Vec<&str> {
+    fn prev_event_ids(&self) -> Vec<&str> {
         self.prev_events.iter().map(|(e, _)| &e as &str).collect()
     }
 
-    fn get_event_id(&self) -> &str {
+    fn event_id(&self) -> &str {
         &self.event_id
     }
 
@@ -170,7 +169,7 @@ pub fn main_old() {
         let results =
             block_on(handler.handle_chunk::<RoomVersionV1>(chunk)).unwrap();
         for res in &results {
-            println!("{}: rejected={}", res.event.get_event_id(), res.rejected);
+            println!("{}: rejected={}", res.event.event_id(), res.rejected);
 
             last_state = Some(res.state_before.clone());
         }

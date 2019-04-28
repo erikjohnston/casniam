@@ -11,11 +11,12 @@ use failure::Error;
 pub mod events;
 pub mod json;
 pub mod server_keys;
+// pub mod auth_rules;
 pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {
-    fn get_prev_event_ids(&self) -> Vec<&str>;
-    fn get_event_id(&self) -> &str;
+    fn event_id(&self) -> &str;
+    fn prev_event_ids(&self) -> Vec<&str>;
 
     fn event_type(&self) -> &str;
     fn state_key(&self) -> Option<&str>;
@@ -142,10 +143,10 @@ impl<ES: EventStore> Handler<ES> {
 
         let mut persisted_state = Vec::new();
         for event in chunk.events {
-            let event_id = event.get_event_id().to_string();
+            let event_id = event.event_id().to_string();
 
             let states = event
-                .get_prev_event_ids()
+                .prev_event_ids()
                 .iter()
                 .map(|e| &event_to_state[e as &str])
                 .collect();
@@ -166,7 +167,7 @@ impl<ES: EventStore> Handler<ES> {
                 state_after.add_event(
                     event.event_type().to_string(),
                     state_key.to_string(),
-                    event.get_event_id().to_string(),
+                    event.event_id().to_string(),
                 );
             }
 
@@ -226,23 +227,21 @@ where
     pub fn from_event(event: E) -> DagChunkFragment<E> {
         DagChunkFragment {
             backwards_extremities: event
-                .get_prev_event_ids()
+                .prev_event_ids()
                 .iter()
                 .map(|e| e.to_string())
                 .collect(),
-            forward_extremities: vec![event.get_event_id().to_string()]
+            forward_extremities: vec![event.event_id().to_string()]
                 .into_iter()
                 .collect(),
-            event_ids: vec![event.get_event_id().to_string()]
-                .into_iter()
-                .collect(),
+            event_ids: vec![event.event_id().to_string()].into_iter().collect(),
             events: vec![event],
         }
     }
 
     pub fn add_event(&mut self, event: E) -> Result<(), E> {
         let backwards: Vec<_> = event
-            .get_prev_event_ids()
+            .prev_event_ids()
             .iter()
             .map(|e| e.to_string())
             .collect();
@@ -252,8 +251,8 @@ where
                 self.forward_extremities.remove(e);
             }
             self.forward_extremities
-                .insert(event.get_event_id().to_string());
-            self.event_ids.insert(event.get_event_id().to_string());
+                .insert(event.event_id().to_string());
+            self.event_ids.insert(event.event_id().to_string());
             self.events.push(event);
             return Ok(());
         }
@@ -274,13 +273,13 @@ fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
 
         let event_map: HashMap<_, _> = events
             .iter()
-            .map(|e| (e.get_event_id().to_string(), e))
+            .map(|e| (e.event_id().to_string(), e))
             .collect();
 
         for event in event_map.values() {
-            for prev_event_id in &event.get_prev_event_ids() {
+            for prev_event_id in &event.prev_event_ids() {
                 if event_map.contains_key(prev_event_id as &str) {
-                    graph.add_edge(event.get_event_id(), prev_event_id, 0);
+                    graph.add_edge(event.event_id(), prev_event_id, 0);
                 } else {
                     missing.insert(prev_event_id.to_string());
                 }
@@ -297,7 +296,7 @@ fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
         (ordering, missing)
     };
 
-    events.sort_unstable_by_key(|event| ordering[event.get_event_id()]);
+    events.sort_unstable_by_key(|event| ordering[event.event_id()]);
 
     missing
 }
@@ -309,11 +308,11 @@ fn get_missing<'a>(
 
     let event_map: HashMap<_, _> = events
         .into_iter()
-        .map(|e| (e.get_event_id().to_string(), e))
+        .map(|e| (e.event_id().to_string(), e))
         .collect();
 
     for event in event_map.values() {
-        for prev_event_id in &event.get_prev_event_ids() {
+        for prev_event_id in &event.prev_event_ids() {
             if !event_map.contains_key(prev_event_id as &str) {
                 missing.insert(prev_event_id.to_string());
             }
@@ -340,11 +339,11 @@ mod tests {
     }
 
     impl Event for TestEvent {
-        fn get_prev_event_ids(&self) -> Vec<&str> {
+        fn prev_event_ids(&self) -> Vec<&str> {
             self.prev_events.iter().map(|e| &e as &str).collect()
         }
 
-        fn get_event_id(&self) -> &str {
+        fn event_id(&self) -> &str {
             &self.event_id
         }
 
@@ -440,8 +439,7 @@ mod tests {
 
         let missing = topological_sort(&mut events);
 
-        let order: Vec<&str> =
-            events.iter().map(|e| e.get_event_id()).collect();
+        let order: Vec<&str> = events.iter().map(|e| e.event_id()).collect();
 
         let expected_order = vec!["B", "C", "D"];
 

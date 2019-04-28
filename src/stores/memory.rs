@@ -73,7 +73,7 @@ where
                 if let Some(state) = store.state_map.get(e_id.as_ref()) {
                     let state_ids = state
                         .iter()
-                        .map(|(k, e)| (k, e.get_event_id().to_string()))
+                        .map(|(k, e)| (k, e.event_id().to_string()))
                         .collect();
                     states.push(state_ids)
                 } else {
