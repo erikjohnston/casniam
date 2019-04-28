@@ -2,17 +2,11 @@
 
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate failure;
 
 #[macro_use]
 extern crate prettytable;
 use prettytable::Table;
 
-pub mod json;
-pub mod protocol;
-pub mod state_map;
-pub mod stores;
 
 use serde::de::IgnoredAny;
 
@@ -26,12 +20,12 @@ use futures::{future, Future, FutureExt};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
-use crate::protocol::v1::{auth, EventV1};
-use crate::protocol::{
+use casniam::protocol::v1::{auth, EventV1};
+use casniam::protocol::{
     DagChunkFragment, Event, EventStore, Handler, RoomState, RoomStateResolver,
     RoomVersion,
 };
-use crate::state_map::StateMap;
+use casniam::state_map::StateMap;
 
 pub struct DummyStateResolver;
 
@@ -47,43 +41,6 @@ impl RoomStateResolver for DummyStateResolver {
         };
 
         future::ok(res).boxed()
-    }
-}
-
-impl RoomState for StateMap<String> {
-    fn new() -> Self {
-        StateMap::new()
-    }
-
-    fn add_event<'a>(
-        &mut self,
-        etype: String,
-        state_key: String,
-        event_id: String,
-    ) {
-        self.insert(&etype, &state_key, event_id);
-    }
-
-    fn get_event_ids(
-        &self,
-        types: impl IntoIterator<Item = (String, String)>,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
-        future::ok(
-            types
-                .into_iter()
-                .filter_map(|(t, s)| self.get(&t, &s))
-                .cloned()
-                .collect(),
-        )
-        .boxed()
-    }
-
-    fn get_types(
-        &self,
-        _types: impl IntoIterator<Item = (String, String)>,
-    ) -> Pin<Box<Future<Output = Result<StateMap<String>, Error>>>> {
-        // FIXME
-        future::ok(self.clone()).boxed()
     }
 }
 
@@ -250,7 +207,7 @@ fn render_server_keys(_req: &HttpRequest) -> HttpResponse {
     let mut verify_keys = BTreeMap::new();
     verify_keys.insert(format!("ed25519:{}", key_name), (pubkey, seckey));
 
-    let keys = protocol::server_keys::make_server_keys(
+    let keys = casniam::protocol::server_keys::make_server_keys(
         "example.com".to_string(),
         verify_keys,
         BTreeMap::new(),
