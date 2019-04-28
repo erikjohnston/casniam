@@ -498,7 +498,10 @@ mod tests {
         type RoomState = StateMap<String>;
         type RoomVersion = DummyVersion;
 
-        fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+        fn missing_events<
+            'a,
+            I: IntoIterator<Item = impl AsRef<str> + ToString>,
+        >(
             &self,
             _event_ids: I,
         ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
@@ -508,14 +511,16 @@ mod tests {
         fn get_events(
             &self,
             _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>
+        {
             unimplemented!()
         }
 
         fn get_state_for<T: AsRef<str>>(
             &self,
             _event_ids: &[T],
-        ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
+        ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>>
+        {
             unimplemented!()
         }
     }
