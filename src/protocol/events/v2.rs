@@ -12,7 +12,7 @@ use std::cmp::max;
 pub struct EventV2 {
     auth_events: Vec<String>,
     content: serde_json::Map<String, serde_json::Value>,
-    depth: u64,
+    depth: i64,
     hashes: EventHash,
     origin: String,
     origin_server_ts: u64,
@@ -102,7 +102,7 @@ impl EventV2 {
         &self.content
     }
 
-    pub fn depth(&self) -> u64 {
+    pub fn depth(&self) -> i64 {
         self.depth
     }
 
@@ -140,19 +140,40 @@ impl EventV2 {
 }
 
 impl Event for EventV2 {
-    fn prev_event_ids(&self) -> Vec<&str> {
-        self.prev_events().iter().map(|s| s as &str).collect()
+    fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
+        self.content()
     }
+
+    fn depth(&self) -> i64 {
+        self.depth()
+    }
+
     fn event_id(&self) -> &str {
         "" // FIXME
     }
 
     fn event_type(&self) -> &str {
-        &self.event_type
+        self.event_type()
+    }
+
+    fn prev_event_ids(&self) -> Vec<&str> {
+        self.prev_events().iter().map(|s| s as &str).collect()
+    }
+
+    fn redacts(&self) -> Option<&str> {
+        unimplemented!() // FIXME
+    }
+
+    fn room_id(&self) -> &str {
+        self.room_id()
+    }
+
+    fn sender(&self) -> &str {
+        self.sender()
     }
 
     fn state_key(&self) -> Option<&str> {
-        self.state_key.as_ref().map(|e| e as &str)
+        self.state_key()
     }
 }
 

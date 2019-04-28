@@ -1,5 +1,6 @@
 use futures::future::Future;
 use petgraph::visit::Walker;
+use serde_json::Value;
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -15,10 +16,14 @@ pub mod server_keys;
 pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {
+    fn content(&self) -> &serde_json::Map<String, Value>;
+    fn depth(&self) -> i64;
     fn event_id(&self) -> &str;
-    fn prev_event_ids(&self) -> Vec<&str>;
-
     fn event_type(&self) -> &str;
+    fn prev_event_ids(&self) -> Vec<&str>;
+    fn redacts(&self) -> Option<&str>;
+    fn room_id(&self) -> &str;
+    fn sender(&self) -> &str;
     fn state_key(&self) -> Option<&str>;
 }
 
@@ -353,6 +358,26 @@ mod tests {
 
         fn state_key(&self) -> Option<&str> {
             self.state_key.as_ref().map(|e| e as &str)
+        }
+
+        fn content(&self) -> &serde_json::Map<String, Value> {
+            unimplemented!()
+        }
+
+        fn depth(&self) -> i64 {
+            unimplemented!()
+        }
+
+        fn redacts(&self) -> Option<&str> {
+            unimplemented!()
+        }
+
+        fn room_id(&self) -> &str {
+            unimplemented!()
+        }
+
+        fn sender(&self) -> &str {
+            unimplemented!()
         }
     }
 

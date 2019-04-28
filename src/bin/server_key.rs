@@ -58,8 +58,12 @@ struct V1Event {
 }
 
 impl Event for V1Event {
-    fn prev_event_ids(&self) -> Vec<&str> {
-        self.prev_events.iter().map(|(e, _)| &e as &str).collect()
+    fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.content
+    }
+
+    fn depth(&self) -> i64 {
+        self.depth
     }
 
     fn event_id(&self) -> &str {
@@ -68,6 +72,22 @@ impl Event for V1Event {
 
     fn event_type(&self) -> &str {
         &self.etype
+    }
+
+    fn prev_event_ids(&self) -> Vec<&str> {
+        self.prev_events.iter().map(|(e, _)| &e as &str).collect()
+    }
+
+    fn redacts(&self) -> Option<&str> {
+        unimplemented!() // FIXME
+    }
+
+    fn room_id(&self) -> &str {
+        &self.room_id
+    }
+
+    fn sender(&self) -> &str {
+        &self.sender
     }
 
     fn state_key(&self) -> Option<&str> {
