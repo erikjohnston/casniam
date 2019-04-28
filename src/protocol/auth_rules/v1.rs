@@ -54,7 +54,7 @@ where
     S: RoomState + Clone,
 {
     let types = auth_types_for_event(&event);
-    let auth_event_ids = await!(state.get_event_ids(types))?;
+    let auth_event_ids = state.get_event_ids(types);
 
     let auth_events_vec = await!(store.get_events(auth_event_ids))?;
 

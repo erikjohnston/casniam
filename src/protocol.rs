@@ -13,9 +13,11 @@ pub mod auth_rules;
 pub mod events;
 pub mod json;
 pub mod server_keys;
+pub mod state;
 pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {
+    fn auth_event_ids(&self) -> Vec<&str>;
     fn content(&self) -> &serde_json::Map<String, Value>;
     fn depth(&self) -> i64;
     fn event_id(&self) -> &str;
@@ -44,15 +46,18 @@ pub trait RoomState: Clone + 'static {
         event_id: String,
     );
 
+    fn get(
+        &self,
+        event_type: impl Borrow<str>,
+        state_key: impl Borrow<str>,
+    ) -> Option<&str>;
+
     fn get_event_ids(
         &self,
         types: impl IntoIterator<Item = (String, String)>,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
+    ) -> Vec<String>;
 
-    fn get_types(
-        &self,
-        types: impl IntoIterator<Item = (String, String)>,
-    ) -> Pin<Box<Future<Output = Result<Self, Error>>>>;
+    fn keys(&self) -> Vec<(&str, &str)>;
 }
 
 pub trait AuthRules {
@@ -92,6 +97,11 @@ pub trait EventStore: Clone + 'static {
         &self,
         event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>>;
+
+    fn get_conflicted_auth_chain(
+        &self,
+        event_ids: Vec<Vec<impl AsRef<str>>>,
+    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>;
 }
 
 pub trait FederationClient {

@@ -58,6 +58,10 @@ struct V1Event {
 }
 
 impl Event for V1Event {
+    fn auth_event_ids(&self) -> Vec<&str> {
+        unimplemented!()
+    }
+
     fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.content
     }
@@ -157,6 +161,13 @@ impl EventStore for DummyStore {
         &self,
         _event_ids: &[T],
     ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
+        unimplemented!()
+    }
+
+    fn get_conflicted_auth_chain(
+        &self,
+        _event_ids: Vec<Vec<impl AsRef<str>>>,
+    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
         unimplemented!()
     }
 }

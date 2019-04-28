@@ -69,7 +69,7 @@ impl EventV2 {
                 format_err!("No state for prev events: {:?}", &prev_events)
             })?;
 
-        let auth_events = await!(state.get_event_ids(auth_types))?;
+        let auth_events = state.get_event_ids(auth_types);
 
         let mut depth = 0;
         let evs = await!(event_store.get_events(&prev_events))?;
@@ -140,6 +140,10 @@ impl EventV2 {
 }
 
 impl Event for EventV2 {
+    fn auth_event_ids(&self) -> Vec<&str> {
+        self.auth_events().iter().map(|s| s as &str).collect()
+    }
+
     fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
         self.content()
     }

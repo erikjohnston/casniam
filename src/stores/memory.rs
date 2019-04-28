@@ -4,7 +4,8 @@ use crate::state_map::StateMap;
 use failure::Error;
 use futures::{future, Future, FutureExt};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::mem::swap;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
@@ -91,5 +92,62 @@ where
             Ok(Some(state))
         }
             .boxed()
+    }
+
+    fn get_conflicted_auth_chain(
+        &self,
+        event_ids: Vec<Vec<impl AsRef<str>>>,
+    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+        let store = self.read().expect("Mutex poisoned");
+
+        let mut auth_chains: Vec<BTreeSet<String>> =
+            Vec::with_capacity(event_ids.len());
+
+        for group in &event_ids {
+            let mut group_chain = BTreeSet::new();
+
+            let mut stack: Vec<&str> =
+                group.into_iter().map(|e| e.as_ref()).collect();
+            let mut new_stack = Vec::new();
+
+            while !stack.is_empty() {
+                for event_id in &stack {
+                    if group_chain.contains(*event_id) {
+                        continue;
+                    }
+
+                    if let Some(event) = store.event_map.get(*event_id) {
+                        new_stack.extend(event.auth_event_ids().into_iter());
+                        group_chain.insert(event.event_id().to_string());
+                    } else {
+                        return future::err(format_err!(
+                            "Don't have full auth chain"
+                        ))
+                        .boxed();
+                    }
+                }
+                swap(&mut stack, &mut new_stack);
+                new_stack.clear();
+            }
+
+            auth_chains.push(group_chain);
+        }
+
+        let union = auth_chains.iter().fold(BTreeSet::new(), |u, x| {
+            x.union(&u).map(|e| e.to_string()).collect()
+        });
+        let intersection = auth_chains.iter().fold(union.clone(), |u, x| {
+            x.intersection(&u).map(|e| e.to_string()).collect()
+        });
+
+        let differences = union.difference(&intersection);
+
+        let events = differences
+            .into_iter()
+            .filter_map(|e| store.event_map.get(e))
+            .cloned()
+            .collect();
+
+        future::ok(events).boxed()
     }
 }
