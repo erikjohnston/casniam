@@ -326,6 +326,7 @@ fn get_missing<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_map::StateMap;
     use futures::executor::block_on;
     use futures::future;
 
@@ -333,6 +334,9 @@ mod tests {
     struct TestEvent {
         event_id: String,
         prev_events: Vec<String>,
+        #[serde(rename = "type")]
+        etype: String,
+        state_key: Option<String>,
     }
 
     impl Event for TestEvent {
@@ -343,6 +347,14 @@ mod tests {
         fn get_event_id(&self) -> &str {
             &self.event_id
         }
+
+        fn event_type(&self) -> &str {
+            &self.etype
+        }
+
+        fn state_key(&self) -> Option<&str> {
+            self.state_key.as_ref().map(|e| e as &str)
+        }
     }
 
     #[test]
@@ -351,14 +363,20 @@ mod tests {
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
         ];
 
@@ -373,14 +391,20 @@ mod tests {
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
         ];
 
@@ -397,14 +421,20 @@ mod tests {
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
         ];
 
@@ -425,49 +455,12 @@ mod tests {
     #[derive(Clone)]
     struct DummyState;
 
-    impl RoomState for DummyState {
-        type Event = TestEvent;
-
-        fn resolve_state<'a>(
-            _states: Vec<&'a Self>,
+    impl RoomStateResolver for DummyState {
+        fn resolve_state<'a, S: RoomState>(
+            _states: Vec<impl Borrow<S>>,
             _store: &'a impl EventStore,
-        ) -> Pin<Box<Future<Output = Result<Self, Error>>>> {
-            Box::pin(future::ok(DummyState))
-        }
-
-        fn add_event<'a>(&mut self, _event: &'a Self::Event) {}
-
-        // fn get_event(
-        //     &self,
-        //     store: &impl EventStore,
-        //     etype: &str,
-        //     state_key: &str,
-        // ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, Error>>>>
-        // {
-        //     unimplemented!()
-        // }
-
-        // fn get_event_id(
-        //     &self,
-        //     etype: &str,
-        //     state_key: &str,
-        // ) -> Pin<Box<Future<Output = Result<Option<String>, Error>>>> {
-        //     unimplemented!()
-        // }
-
-        fn get_event_ids(
-            &self,
-            _types: impl IntoIterator<Item = (String, String)>,
-        ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
-            unimplemented!()
-        }
-
-        fn get_types(
-            &self,
-            _types: impl IntoIterator<Item = (String, String)>,
-        ) -> Pin<Box<Future<Output = Result<StateMap<Self::Event>, Error>>>>
-        {
-            unimplemented!()
+        ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
+            Box::pin(future::ok(S::new()))
         }
     }
 
@@ -475,11 +468,11 @@ mod tests {
 
     impl AuthRules for DummyAuth {
         type Event = TestEvent;
-        type State = DummyState;
 
-        fn check<'a>(
+        fn check(
             _e: &Self::Event,
-            _s: &Self::State,
+            _s: &impl RoomState,
+            _store: &impl EventStore<Event = Self::Event>,
         ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
             Box::pin(future::ok(()))
         }
@@ -497,12 +490,15 @@ mod tests {
         type Auth = DummyAuth;
     }
 
+    #[derive(Clone, Debug)]
     struct DummyStore;
 
     impl EventStore for DummyStore {
         type Event = TestEvent;
+        type RoomState = StateMap<String>;
+        type RoomVersion = DummyVersion;
 
-        fn missing_events<'a, I: IntoIterator<Item = &'a str>>(
+        fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
             &self,
             _event_ids: I,
         ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
@@ -512,14 +508,14 @@ mod tests {
         fn get_events(
             &self,
             _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> Pin<Box<Future<Output = Result<Vec<TestEvent>, Error>>>> {
+        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
             unimplemented!()
         }
 
-        fn get_state_for<S: RoomState, T: AsRef<str>>(
+        fn get_state_for<T: AsRef<str>>(
             &self,
             _event_ids: &[T],
-        ) -> Pin<Box<Future<Output = Result<Option<S>, Error>>>> {
+        ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
             unimplemented!()
         }
     }
@@ -534,18 +530,26 @@ mod tests {
             TestEvent {
                 event_id: "A".to_string(),
                 prev_events: vec![],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
+                etype: "type".to_string(),
+                state_key: None,
             },
         ];
 
