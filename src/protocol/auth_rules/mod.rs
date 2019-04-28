@@ -1,1 +1,3 @@
-pub mod v1;
+mod v1;
+
+pub use v1::AuthV1;

@@ -101,7 +101,7 @@ struct RoomVersionV1;
 impl RoomVersion for RoomVersionV1 {
     type Event = V1Event;
     type State = DummyStateResolver;
-    type Auth = auth_rules::v1::AuthV1<Self::Event>;
+    type Auth = auth_rules::AuthV1<Self::Event>;
 }
 
 impl EventV1 for V1Event {
