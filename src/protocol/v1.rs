@@ -1,4 +1,3 @@
-pub mod auth;
 // pub mod state;
 
 use serde_json::Value;

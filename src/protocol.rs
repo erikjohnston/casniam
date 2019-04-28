@@ -9,10 +9,10 @@ use std::pin::Pin;
 
 use failure::Error;
 
+pub mod auth_rules;
 pub mod events;
 pub mod json;
 pub mod server_keys;
-// pub mod auth_rules;
 pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {

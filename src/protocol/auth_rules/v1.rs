@@ -1,20 +1,15 @@
-use crate::protocol::{EventStore, RoomState};
-
-use std::fmt;
-
-use failure::Error;
-
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::str::FromStr;
 
+use failure::Error;
 use futures::Future;
-
 use serde_json::{self, Value};
 
-use super::EventV1;
 use crate::protocol::AuthRules;
+use crate::protocol::{Event, EventStore, RoomState};
 use crate::state_map::StateMap;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
@@ -31,7 +26,7 @@ pub struct AuthV1<E> {
 
 impl<E> AuthRules for AuthV1<E>
 where
-    E: EventV1 + 'static,
+    E: Event + 'static,
 {
     type Event = E;
 
@@ -55,7 +50,7 @@ pub async fn check<E, S>(
     store: impl EventStore<Event = E>,
 ) -> Result<(), Error>
 where
-    E: EventV1 + Clone,
+    E: Event + Clone,
     S: RoomState + Clone,
 {
     let types = auth_types_for_event(&event);
@@ -88,15 +83,15 @@ struct Checker<'a, E: Clone + fmt::Debug> {
 
 impl<'a, E> Checker<'a, E>
 where
-    E: EventV1,
+    E: Event,
 {
     pub fn check(&'a self) -> Result<(), Error> {
         // TODO: Sig checks, can federate, size checks.
 
-        let sender_domain = get_domain_from_id(self.event.get_sender())?;
+        let sender_domain = get_domain_from_id(self.event.sender())?;
 
-        if self.event.get_type() == "m.room.create" {
-            let room_domain = get_domain_from_id(self.event.get_room_id())?;
+        if self.event.event_type() == "m.room.create" {
+            let room_domain = get_domain_from_id(self.event.room_id())?;
             ensure!(
                 room_domain == sender_domain,
                 "sender and room domains do not match"
@@ -108,8 +103,8 @@ where
             bail!("No create event");
         }
 
-        if self.event.get_type() == "m.room.aliases" {
-            let state_key = if let Some(s) = self.event.get_state_key() {
+        if self.event.event_type() == "m.room.aliases" {
+            let state_key = if let Some(s) = self.event.state_key() {
                 s
             } else {
                 bail!("alias event must be state event");
@@ -121,23 +116,23 @@ where
             );
         }
 
-        if self.event.get_type() == "m.room.member" {
+        if self.event.event_type() == "m.room.member" {
             return self.check_membership();
         }
 
         self.check_user_in_room()?;
 
-        if self.event.get_type() == "m.room.third_party_invite" {
+        if self.event.event_type() == "m.room.third_party_invite" {
             return self.check_third_party_invite();
         }
 
         self.check_can_send_event()?;
 
-        if self.event.get_type() == "m.room.power_levels" {
+        if self.event.event_type() == "m.room.power_levels" {
             self.check_power_levels()?;
         }
 
-        if self.event.get_type() == "m.room.redaction" {
+        if self.event.event_type() == "m.room.redaction" {
             self.check_redaction()?;
         }
 
@@ -145,7 +140,7 @@ where
     }
 
     fn check_third_party_invite(&self) -> Result<(), Error> {
-        let user_level = self.get_user_power_level(self.event.get_sender());
+        let user_level = self.get_user_power_level(self.event.sender());
         let invite_level = self.get_named_level("invite").unwrap_or(0);
 
         if user_level < invite_level {
@@ -156,11 +151,11 @@ where
     }
 
     fn check_membership(&self) -> Result<(), Error> {
-        let membership = self.event.get_content()["membership"]
+        let membership = self.event.content()["membership"]
             .as_str()
             .ok_or_else(|| format_err!("missing membership key"))?;
 
-        let state_key = if let Some(state_key) = self.event.get_state_key() {
+        let state_key = if let Some(state_key) = self.event.state_key() {
             state_key
         } else {
             bail!("membership event must be state event");
@@ -179,7 +174,7 @@ where
 
                 if Some(creation_event.event_id()) == single_prev_event_id {
                     let creator = creation_event
-                        .get_content()
+                        .content()
                         .get("creator")
                         .and_then(|v| v.as_str());
                     if creator == Some(&state_key) {
@@ -191,11 +186,10 @@ where
 
         // TODO: Can federate
 
-        let (caller_in_room, caller_invited) = if let Some(ev) = self
-            .auth_events
-            .get("m.room.member", self.event.get_sender())
+        let (caller_in_room, caller_invited) = if let Some(ev) =
+            self.auth_events.get("m.room.member", self.event.sender())
         {
-            let m = ev.get_content()["membership"]
+            let m = ev.content()["membership"]
                 .as_str()
                 .ok_or_else(|| format_err!("missing membership key"))?;
             (m == "join", m == "invite")
@@ -206,7 +200,7 @@ where
         let (target_in_room, target_banned) = if let Some(ev) =
             self.auth_events.get("m.room.member", state_key)
         {
-            let m = ev.get_content()["membership"]
+            let m = ev.content()["membership"]
                 .as_str()
                 .ok_or_else(|| format_err!("missing membership key"))?;
             (m == "join", m == "ban")
@@ -215,7 +209,7 @@ where
         };
 
         if membership == "invite"
-            && self.event.get_content().contains_key("third_party_invite")
+            && self.event.content().contains_key("third_party_invite")
         {
             self.verify_third_party_invite()?;
 
@@ -228,11 +222,11 @@ where
         let join_rule = self
             .auth_events
             .get("m.room.join_rules", "")
-            .and_then(|ev| ev.get_content().get("join_rule"))
+            .and_then(|ev| ev.content().get("join_rule"))
             .and_then(Value::as_str)
             .unwrap_or("invite");
 
-        let user_level = self.get_user_power_level(self.event.get_sender());
+        let user_level = self.get_user_power_level(self.event.sender());
         let target_level = self.get_user_power_level(state_key);
 
         let ban_level = self.get_named_level("ban").unwrap_or(50);
@@ -242,7 +236,7 @@ where
         if membership != "join" {
             if caller_invited
                 && membership == "leave"
-                && state_key == self.event.get_sender()
+                && state_key == self.event.sender()
             {
                 return Ok(());
             }
@@ -270,7 +264,7 @@ where
                 if target_banned {
                     bail!("user is banned");
                 }
-                if self.event.get_sender() != state_key {
+                if self.event.sender() != state_key {
                     bail!("sender and state key do not match")
                 }
 
@@ -289,7 +283,7 @@ where
                     bail!("cannot unban user")
                 }
 
-                if state_key != self.event.get_sender() {
+                if state_key != self.event.sender() {
                     let kick_level = self.get_named_level("kick").unwrap_or(50);
                     if user_level < kick_level || user_level <= target_level {
                         bail!("cannot kick user")
@@ -310,8 +304,8 @@ where
     fn check_user_in_room(&self) -> Result<(), Error> {
         let m = self
             .auth_events
-            .get("m.room.member", self.event.get_sender())
-            .and_then(|e| e.get_content().get("membership"))
+            .get("m.room.member", self.event.sender())
+            .and_then(|e| e.content().get("membership"))
             .and_then(Value::as_str);
 
         if m == Some("join") {
@@ -323,19 +317,17 @@ where
 
     fn check_can_send_event(&self) -> Result<(), Error> {
         let send_level = self.get_send_level(
-            self.event.get_type(),
-            self.event.get_state_key().is_some(),
+            self.event.event_type(),
+            self.event.state_key().is_some(),
         );
-        let user_level = self.get_user_power_level(self.event.get_sender());
+        let user_level = self.get_user_power_level(self.event.sender());
 
         if user_level < send_level {
             bail!("user doesn't have power to send event");
         }
 
-        if let Some(state_key) = self.event.get_state_key() {
-            if state_key.starts_with("@")
-                && state_key != self.event.get_sender()
-            {
+        if let Some(state_key) = self.event.state_key() {
+            if state_key.starts_with("@") && state_key != self.event.sender() {
                 bail!("cannot have user state_key");
             }
         }
@@ -351,7 +343,7 @@ where
                 return Ok(());
             };
 
-        let user_level = self.get_user_power_level(self.event.get_sender());
+        let user_level = self.get_user_power_level(self.event.sender());
 
         let levels_to_check = vec![
             "users_default",
@@ -364,9 +356,8 @@ where
         ];
 
         for name in levels_to_check {
-            let old_level =
-                current_power.get_content().get(name).and_then(as_int);
-            let new_level = self.event.get_content().get(name).and_then(as_int);
+            let old_level = current_power.content().get(name).and_then(as_int);
+            let new_level = self.event.content().get(name).and_then(as_int);
 
             if old_level == new_level {
                 continue;
@@ -386,7 +377,7 @@ where
         }
 
         let old_users: HashMap<String, NumberLike> = current_power
-            .get_content()
+            .content()
             .get("users")
             .map(|v| {
                 serde_json::from_value(v.clone())
@@ -397,7 +388,7 @@ where
 
         let new_users: HashMap<String, NumberLike> = self
             .event
-            .get_content()
+            .content()
             .get("users")
             .map(|v| {
                 serde_json::from_value(v.clone())
@@ -432,7 +423,7 @@ where
         }
 
         let old_events: HashMap<String, NumberLike> = current_power
-            .get_content()
+            .content()
             .get("events")
             .map(|v| {
                 serde_json::from_value(v.clone())
@@ -443,7 +434,7 @@ where
 
         let new_events: HashMap<String, NumberLike> = self
             .event
-            .get_content()
+            .content()
             .get("events")
             .map(|v| {
                 serde_json::from_value(v.clone())
@@ -481,16 +472,16 @@ where
     }
 
     fn check_redaction(&self) -> Result<(), Error> {
-        let user_level = self.get_user_power_level(self.event.get_sender());
+        let user_level = self.get_user_power_level(self.event.sender());
         let redact_level = self.get_named_level("redact").unwrap_or(50);
 
         if user_level >= redact_level {
             return Ok(());
         }
 
-        if let Some(redacts) = self.event.get_redacts() {
+        if let Some(redacts) = self.event.redacts() {
             if get_domain_from_id(redacts)?
-                == get_domain_from_id(self.event.get_sender())?
+                == get_domain_from_id(self.event.sender())?
             {
                 return Ok(());
             }
@@ -502,7 +493,7 @@ where
     fn verify_third_party_invite(&self) -> Result<(), Error> {
         let third_party = self
             .event
-            .get_content()
+            .content()
             .get("third_party_invite")
             .ok_or_else(|| format_err!("not third party invite"))?;
 
@@ -519,11 +510,11 @@ where
             .get("m.room.third_party_invite", &signed.token)
             .ok_or_else(|| format_err!("no third party invite event"))?;
 
-        if third_party_invite.get_sender() != self.event.get_sender() {
+        if third_party_invite.sender() != self.event.sender() {
             bail!("third party invite and event sender don't match");
         }
 
-        if Some(&signed.mixd as &str) != self.event.get_state_key() {
+        if Some(&signed.mixd as &str) != self.event.state_key() {
             bail!("state_key and signed mxid do not match");
         }
 
@@ -535,12 +526,12 @@ where
     fn get_user_power_level(&self, user: &str) -> i64 {
         if let Some(pev) = self.auth_events.get("m.room.power_levels", "") {
             let default = pev
-                .get_content()
+                .content()
                 .get("users_default")
                 .and_then(as_int)
                 .unwrap_or(0);
 
-            pev.get_content()
+            pev.content()
                 .get("users")
                 .and_then(Value::as_object)
                 .and_then(|u| u.get(user))
@@ -549,7 +540,7 @@ where
         } else {
             self.auth_events
                 .get("m.room.create", "")
-                .and_then(|ev| ev.get_content().get("creator"))
+                .and_then(|ev| ev.content().get("creator"))
                 .and_then(Value::as_str)
                 .map(|creator| if creator == user { 100 } else { 0 })
                 .unwrap_or(0)
@@ -559,25 +550,25 @@ where
     fn get_named_level(&self, name: &str) -> Option<i64> {
         self.auth_events
             .get("m.room.power_levels", "")
-            .and_then(|ev| ev.get_content().get(name))
+            .and_then(|ev| ev.content().get(name))
             .and_then(as_int)
     }
 
     fn get_send_level(&self, etype: &str, is_state: bool) -> i64 {
         if let Some(pev) = self.auth_events.get("m.room.power_levels", "") {
             let default = if is_state {
-                pev.get_content()
+                pev.content()
                     .get("state_default")
                     .and_then(as_int)
                     .unwrap_or(50)
             } else {
-                pev.get_content()
+                pev.content()
                     .get("events_default")
                     .and_then(as_int)
                     .unwrap_or(0)
             };
 
-            pev.get_content()
+            pev.content()
                 .get("events")
                 .and_then(Value::as_object)
                 .and_then(|u| u.get(etype))
@@ -606,27 +597,26 @@ fn as_int(value: &Value) -> Option<i64> {
     None
 }
 
-pub fn auth_types_for_event(event: &impl EventV1) -> Vec<(String, String)> {
-    if event.get_type() == "m.room.create" {
+pub fn auth_types_for_event(event: &impl Event) -> Vec<(String, String)> {
+    if event.event_type() == "m.room.create" {
         return Vec::new();
     }
 
     let mut auth_types: Vec<(String, String)> = vec![
         ("m.room.create".into(), "".into()),
         ("m.room.power_levels".into(), "".into()),
-        ("m.room.member".into(), event.get_sender().into()),
+        ("m.room.member".into(), event.sender().into()),
     ];
 
-    if event.get_type() == "m.room.member" {
-        let membership = event.get_content()["membership"]
-            .as_str()
-            .unwrap_or_default(); // TODO: Is this ok?
+    if event.event_type() == "m.room.member" {
+        let membership =
+            event.content()["membership"].as_str().unwrap_or_default(); // TODO: Is this ok?
 
         if membership == "join" || membership == "invite" {
             auth_types.push(("m.room.join_rules".into(), "".into()));
         }
 
-        if let Some(state_key) = event.get_state_key() {
+        if let Some(state_key) = event.state_key() {
             auth_types.push(("m.room.member".into(), state_key.into()));
         }
 

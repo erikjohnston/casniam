@@ -19,10 +19,10 @@ use futures::{future, Future, FutureExt};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
-use casniam::protocol::v1::{auth, EventV1};
+use casniam::protocol::v1::EventV1;
 use casniam::protocol::{
-    DagChunkFragment, Event, EventStore, Handler, RoomState, RoomStateResolver,
-    RoomVersion,
+    auth_rules, DagChunkFragment, Event, EventStore, Handler, RoomState,
+    RoomStateResolver, RoomVersion,
 };
 use casniam::state_map::StateMap;
 
@@ -101,7 +101,7 @@ struct RoomVersionV1;
 impl RoomVersion for RoomVersionV1 {
     type Event = V1Event;
     type State = DummyStateResolver;
-    type Auth = auth::AuthV1<Self::Event>;
+    type Auth = auth_rules::v1::AuthV1<Self::Event>;
 }
 
 impl EventV1 for V1Event {
