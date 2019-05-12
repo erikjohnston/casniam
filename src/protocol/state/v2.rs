@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use failure::Error;
-use petgraph::graphmap::DiGraphMap;
+use petgraph::{Direction, graphmap::DiGraphMap};
 use serde_json::Value;
 
 use crate::protocol::{Event, EventStore, RoomState, RoomStateResolver};
@@ -124,12 +124,77 @@ fn is_power_event(event: &impl Event) -> bool {
     }
 }
 
-fn sort_by_reverse_topological_power_ordering(events: &mut Vec<impl Event>) {
+async fn sort_by_reverse_topological_power_ordering<'a>(events: &'a mut Vec<impl Event>, store: &'a impl EventStore) -> Result<(), Error> {
     let mut graph = DiGraphMap::new();
-
-    for ev in events {
+    let mut ordering = BTreeMap::new();
+    for ev in events.iter() {
         for aid in ev.auth_event_ids() {
             graph.add_edge(ev.event_id(), aid, 0);
         }
+        let pl = await!(get_power_level_for_sender(ev, store))?;
+        ordering.insert(ev.event_id(), (-pl, ev.origin_server_ts(), ev.event_id()));
     }
+
+    let mut graph = graph.into_graph::<u32>();
+
+    let mut ordered = BTreeMap::new();
+    let mut idx = 0;
+    while let Some(node) = {
+        graph.externals(Direction::Incoming).max_by_key(|e| &ordering[graph[*e]])
+    } {
+        let ev_id = graph[node];
+        ordered.insert(ev_id.to_string(), idx);
+        idx += 1;
+        graph.remove_node(node);
+    }
+
+    events.sort_by_key(|e| ordered[e.event_id()]);
+
+    Ok(())
+}
+
+
+async fn get_power_level_for_sender<'a>(event: &'a impl Event, store: &'a impl EventStore) -> Result<i64, Error> {
+    let auth_events = await!(store.get_events(event.auth_event_ids()))?;
+
+    let mut pl = None;
+    let mut create = None;
+    for aev in auth_events {
+        match (aev.event_type(), aev.state_key()) {
+            ("m.room.create", Some("")) => create = Some(aev),
+            ("m.room.power_levels", Some("")) => pl = Some(aev),
+            _ => {},
+        }
+    }
+
+    let pl = if let Some(pl) = pl {
+        pl
+    } else {
+        if let Some(create) = create {
+            if create.sender() == event.sender() {
+                return Ok(100)
+            }
+        }
+        return Ok(0);
+    };
+
+    // FIXME: Handle non integer power levels? Ideally we'd have already parsed the contents structure.
+
+    if let Some(Value::Number(num)) = pl.content().get("users").and_then(|m| m.get(event.sender())) {
+        if let Some(u) = num.as_i64() {
+            return Ok(u)
+        } else {
+            bail!("power level for event {} was not in i64 range: {}", pl.event_id(), num);
+        }
+    }
+
+    if let Some(Value::Number(num)) = pl.content().get("users_default") {
+        if let Some(u) = num.as_i64() {
+            return Ok(u)
+        } else {
+            bail!("power level in event {} was not in i64 range: {}", pl.event_id(), num);
+        }
+    }
+
+    Ok(0)
 }

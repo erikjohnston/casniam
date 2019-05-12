@@ -160,6 +160,10 @@ impl Event for EventV2 {
         self.event_type()
     }
 
+    fn origin_server_ts(&self) -> u64 {
+        self.origin_server_ts
+    }
+
     fn prev_event_ids(&self) -> Vec<&str> {
         self.prev_events().iter().map(|s| s as &str).collect()
     }

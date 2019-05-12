@@ -1,4 +1,4 @@
-#![feature(await_macro, async_await, futures_api)]
+#![feature(await_macro, async_await)]
 
 #[macro_use]
 extern crate serde_derive;
@@ -49,6 +49,7 @@ struct V1Event {
     prev_events: Vec<(String, IgnoredAny)>,
     #[serde(rename = "type")]
     etype: String,
+    origin_server_ts: u64,
     state_key: Option<String>,
     room_id: String,
     content: serde_json::Map<String, serde_json::Value>,
@@ -76,6 +77,9 @@ impl Event for V1Event {
 
     fn event_type(&self) -> &str {
         &self.etype
+    }
+    fn origin_server_ts(&self) -> u64 {
+        self.origin_server_ts
     }
 
     fn prev_event_ids(&self) -> Vec<&str> {

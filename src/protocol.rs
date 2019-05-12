@@ -22,6 +22,7 @@ pub trait Event: Clone + fmt::Debug {
     fn depth(&self) -> i64;
     fn event_id(&self) -> &str;
     fn event_type(&self) -> &str;
+    fn origin_server_ts(&self) -> u64;
     fn prev_event_ids(&self) -> Vec<&str>;
     fn redacts(&self) -> Option<&str>;
     fn room_id(&self) -> &str;
