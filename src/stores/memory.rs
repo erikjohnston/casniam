@@ -58,7 +58,7 @@ where
                 .cloned()
                 .collect(),
         )
-        .boxed()
+        .boxed_local()
     }
 
     fn get_state_for<T: AsRef<str>>(
@@ -91,7 +91,7 @@ where
 
             Ok(Some(state))
         }
-            .boxed()
+            .boxed_local()
     }
 
     fn get_conflicted_auth_chain(
@@ -123,7 +123,7 @@ where
                         return future::err(format_err!(
                             "Don't have full auth chain"
                         ))
-                        .boxed();
+                        .boxed_local();
                     }
                 }
                 swap(&mut stack, &mut new_stack);
@@ -148,6 +148,6 @@ where
             .cloned()
             .collect();
 
-        future::ok(events).boxed()
+        future::ok(events).boxed_local()
     }
 }

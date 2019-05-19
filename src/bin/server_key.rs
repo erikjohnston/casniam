@@ -39,7 +39,7 @@ impl RoomStateResolver for DummyStateResolver {
             _ => unimplemented!(),
         };
 
-        future::ok(res).boxed()
+        future::ok(res).boxed_local()
     }
 }
 

@@ -5,7 +5,7 @@ name = "casniam"
 version = "0.1.0"
 
 [dependencies]
-actix = "0.7.9"
+# actix = "0.7.9"
 actix-web = "0.7.18"
 base64 = "0.10.1"
 chrono = "0.4.6"
@@ -32,5 +32,6 @@ version = "1.0.27"
 [dependencies.sha1]
 features = ["std"]
 version = "0.6.0"
-[replace."cookie:0.11.0"]
-git = "https://github.com/alexcrichton/cookie-rs.git"
+
+#[replace."cookie:0.11.0"]
+#git = "https://github.com/alexcrichton/cookie-rs.git"
