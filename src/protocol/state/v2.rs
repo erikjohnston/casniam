@@ -1,28 +1,66 @@
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 
 use failure::Error;
+use futures::future::FutureExt;
 use petgraph::{graphmap::DiGraphMap, Direction};
 use serde_json::Value;
 
-use crate::protocol::{Event, EventStore, RoomState, RoomStateResolver};
+use crate::protocol::{
+    AuthRules, Event, EventStore, RoomState, RoomStateResolver,
+};
 
-pub struct RoomStateResolverV2;
+pub struct RoomStateResolverV2<A> {
+    _auth: PhantomData<A>,
+}
 
-impl RoomStateResolver for RoomStateResolverV2 {
-    fn resolve_state<'a, S: RoomState>(
-        states: Vec<impl Borrow<S>>,
-        store: &'a impl EventStore,
+impl<A> RoomStateResolver for RoomStateResolverV2<A>
+where
+    A: AuthRules,
+{
+    type Auth = A;
+
+    fn resolve_state<S: RoomState>(
+        states: Vec<S>,
+        store: &impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
     ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
-        unimplemented!()
+        let store = store.clone();
+        async move {
+            let (
+                unconflicted,
+                mut conflicted_power_events,
+                conflicted_standard_events,
+            ) = get_conflicted_set(&store, &states).await?;
+
+            sort_by_reverse_topological_power_ordering(
+                &mut conflicted_power_events,
+                &store,
+            )
+            .await?;
+
+            let mut resolved = iterative_auth_checks::<Self::Auth, _, _>(
+                &conflicted_power_events,
+                &unconflicted,
+                &store,
+            )
+            .await?;
+
+            // FIXME: Mainline sort
+
+            // FIXME: iterative auth checks
+
+            Ok(unconflicted)
+        }
+            .boxed_local()
     }
 }
 
 /// Get all entries that do not match across all states
 fn get_conflicted_events<S: RoomState>(
-    states: &[&S],
+    states: &[S],
 ) -> (S, BTreeMap<(String, String), BTreeSet<String>>) {
     let mut keys = BTreeSet::new();
     for state in states {
@@ -61,15 +99,16 @@ fn get_conflicted_events<S: RoomState>(
     (unconflicted, conflicted)
 }
 
-async fn get_conflicted_set<'a, S: RoomState>(
-    store: &'a impl EventStore,
-    states: &'a [&S],
-) -> Result<(), Error> {
+async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
+    store: &'a ST,
+    states: &'a [S],
+) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>), Error> {
     let (unconflicted, conflicted) = get_conflicted_events(states);
 
     let mut state_sets = Vec::with_capacity(states.len());
     for state in states {
         let state_set: Vec<_> = state
+            .borrow()
             .keys()
             .into_iter()
             .filter_map(|key| match key {
@@ -80,7 +119,7 @@ async fn get_conflicted_set<'a, S: RoomState>(
                 ("m.room.third_party_invite", _) => Some(key),
                 _ => None,
             })
-            .filter_map(|key| state.get(key.0, key.1))
+            .filter_map(|key| state.borrow().get(key.0, key.1))
             .collect();
 
         state_sets.push(state_set);
@@ -100,7 +139,11 @@ async fn get_conflicted_set<'a, S: RoomState>(
         }
     }
 
-    Ok(())
+    Ok((
+        unconflicted,
+        conflicted_power_events,
+        conflicted_standard_events,
+    ))
 }
 
 fn is_power_event(event: &impl Event) -> bool {
@@ -217,4 +260,80 @@ async fn get_power_level_for_sender<'a>(
     }
 
     Ok(0)
+}
+
+async fn iterative_auth_checks<
+    'a,
+    A: AuthRules<Event = ST::Event>,
+    S: RoomState,
+    ST: EventStore,
+>(
+    sorted_events: &'a [ST::Event],
+    base_state: &'a S,
+    store: &'a ST,
+) -> Result<S, Error> {
+    let mut new_state = base_state.clone();
+
+    for event in sorted_events {
+        // FIXME: Need to get auth events for auth_events.
+
+        let types = A::auth_types_for_event(event);
+
+        let auth_events = store.get_events(event.auth_event_ids()).await?;
+        let mut auth_map = S::new();
+        for e in auth_events {
+            auth_map.add_event(
+                e.event_type().to_string(),
+                e.state_key().expect("should be state event").to_string(),
+                e.event_id().to_string(),
+            );
+        }
+
+        for (t, s) in types {
+            if let Some(e) = new_state.get(t.as_str(), s.as_str()) {
+                auth_map.add_event(t.to_string(), s.to_string(), e.to_string());
+            }
+        }
+
+        let result = A::check(event, &auth_map, store).await;
+        if result.is_ok() {
+            new_state.add_event(
+                event.event_type().to_string(),
+                event
+                    .state_key()
+                    .expect("should be state event")
+                    .to_string(),
+                event.event_id().to_string(),
+            );
+        }
+    }
+
+    Ok(new_state)
+}
+
+async fn mainline_ordering<
+    'a,
+    A: AuthRules<Event = ST::Event>,
+    S: RoomState,
+    ST: EventStore,
+>(
+    sorted_events: &'a [ST::Event],
+    resolved_power_id: &'a str,
+    store: &'a ST,
+) -> Result<(), Error> {
+    let mut mainline = Vec::new();
+
+    let mut p = resolved_power_id.to_string();
+    loop {
+        mainline.push(p.clone());
+        if let Some(a) = store.get_event(p).await? {
+            p = a.event_id().to_string();
+        } else {
+            break;
+        }
+    }
+
+    // FIXME
+
+    Ok(())
 }

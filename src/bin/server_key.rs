@@ -26,11 +26,13 @@ use casniam::protocol::{
 };
 use casniam::state_map::StateMap;
 
-pub struct DummyStateResolver;
+struct DummyStateResolver;
 
 impl RoomStateResolver for DummyStateResolver {
+    type Auth = auth_rules::AuthV1<V1Event>;
+
     fn resolve_state<'a, S: RoomState>(
-        states: Vec<impl Borrow<S>>,
+        states: Vec<S>,
         _store: &'a impl EventStore,
     ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
         let res = match states.len() {

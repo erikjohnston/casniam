@@ -1,10 +1,11 @@
-use futures::future::Future;
+use futures::future::{Future, FutureExt};
 use petgraph::visit::Walker;
 use serde_json::Value;
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::iter;
 use std::pin::Pin;
 
 use failure::Error;
@@ -31,9 +32,11 @@ pub trait Event: Clone + fmt::Debug {
 }
 
 pub trait RoomStateResolver {
+    type Auth: AuthRules;
+
     fn resolve_state<'a, S: RoomState>(
-        states: Vec<impl Borrow<S>>,
-        store: &'a impl EventStore,
+        states: Vec<S>,
+        store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
     ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
 }
 
@@ -75,7 +78,7 @@ pub trait AuthRules {
 
 pub trait RoomVersion {
     type Event: Event;
-    type State: RoomStateResolver;
+    type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
 }
 
@@ -93,6 +96,15 @@ pub trait EventStore: Clone + 'static {
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>;
+
+    fn get_event(
+        &self,
+        event_id: impl AsRef<str>,
+    ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, Error>>>> {
+        self.get_events(iter::once(event_id))
+            .map(|r| r.map(|v| v.into_iter().next()))
+            .boxed_local()
+    }
 
     fn get_state_for<T: AsRef<str>>(
         &self,
@@ -164,7 +176,7 @@ impl<ES: EventStore> Handler<ES> {
             let states = event
                 .prev_event_ids()
                 .iter()
-                .map(|e| &event_to_state[e as &str])
+                .map(|e| event_to_state[e as &str].clone())
                 .collect();
 
             let state_before: ES::RoomState =
