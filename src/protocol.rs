@@ -82,6 +82,15 @@ pub trait RoomVersion {
     type Auth: AuthRules<Event = Self::Event>;
 }
 
+pub struct RoomVersion2;
+
+impl RoomVersion for RoomVersion2 {
+    type Event = events::v2::EventV2;
+    type Auth = auth_rules::AuthV1<events::v2::EventV2>;
+    type State =
+        state::RoomStateResolverV2<auth_rules::AuthV1<events::v2::EventV2>>;
+}
+
 pub trait EventStore: Clone + 'static {
     type Event: Event;
     type RoomState: RoomState;
@@ -402,6 +411,14 @@ mod tests {
         fn sender(&self) -> &str {
             unimplemented!()
         }
+
+        fn auth_event_ids(&self) -> Vec<&str> {
+            unimplemented!()
+        }
+
+        fn origin_server_ts(&self) -> u64 {
+            unimplemented!()
+        }
     }
 
     #[test]
@@ -502,9 +519,11 @@ mod tests {
     struct DummyState;
 
     impl RoomStateResolver for DummyState {
+        type Auth = DummyAuth;
+
         fn resolve_state<'a, S: RoomState>(
-            _states: Vec<impl Borrow<S>>,
-            _store: &'a impl EventStore,
+            _states: Vec<S>,
+            _store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
         ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
             Box::pin(future::ok(S::new()))
         }
@@ -566,6 +585,14 @@ mod tests {
             &self,
             _event_ids: &[T],
         ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>>
+        {
+            unimplemented!()
+        }
+
+        fn get_conflicted_auth_chain(
+            &self,
+            _event_ids: Vec<Vec<impl AsRef<str>>>,
+        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>
         {
             unimplemented!()
         }

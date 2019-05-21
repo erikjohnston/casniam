@@ -32,7 +32,7 @@ where
             let (
                 unconflicted,
                 mut conflicted_power_events,
-                conflicted_standard_events,
+                mut conflicted_standard_events,
             ) = get_conflicted_set(&store, &states).await?;
 
             sort_by_reverse_topological_power_ordering(
@@ -41,18 +41,30 @@ where
             )
             .await?;
 
-            let mut resolved = iterative_auth_checks::<Self::Auth, _, _>(
+            let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_power_events,
                 &unconflicted,
                 &store,
             )
             .await?;
 
-            // FIXME: Mainline sort
+            let power_level_id =
+                resolved.get("m.room.power_levels", "").unwrap_or_default();
 
-            // FIXME: iterative auth checks
+            mainline_ordering::<A, _>(
+                &mut conflicted_standard_events,
+                power_level_id,
+                &store,
+            )
+            .await?;
 
-            Ok(unconflicted)
+            let resolved = iterative_auth_checks::<Self::Auth, _, _>(
+                &conflicted_standard_events,
+                &resolved,
+                &store,
+            )
+            .await?;
+            Ok(resolved)
         }
             .boxed_local()
     }
@@ -103,7 +115,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     store: &'a ST,
     states: &'a [S],
 ) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>), Error> {
-    let (unconflicted, conflicted) = get_conflicted_events(states);
+    let (unconflicted, _) = get_conflicted_events(states);
 
     let mut state_sets = Vec::with_capacity(states.len());
     for state in states {
@@ -314,10 +326,9 @@ async fn iterative_auth_checks<
 async fn mainline_ordering<
     'a,
     A: AuthRules<Event = ST::Event>,
-    S: RoomState,
     ST: EventStore,
 >(
-    sorted_events: &'a [ST::Event],
+    events: &'a mut Vec<ST::Event>,
     resolved_power_id: &'a str,
     store: &'a ST,
 ) -> Result<(), Error> {
@@ -333,7 +344,57 @@ async fn mainline_ordering<
         }
     }
 
-    // FIXME
+    let mut order_map = BTreeMap::new();
+    for e in events.iter() {
+        let depth =
+            get_mainline_depth_for_event::<A, _>(e, &mainline, store).await?;
+        order_map.insert(
+            e.event_id().to_string(),
+            (depth, e.origin_server_ts(), e.event_id().to_string()),
+        );
+    }
+
+    events.sort_by_key(|e| &order_map[e.event_id()]);
 
     Ok(())
+}
+
+async fn get_mainline_depth_for_event<
+    'a,
+    A: AuthRules<Event = ST::Event>,
+    ST: EventStore,
+>(
+    event: &'a ST::Event,
+    mainline: &'a [String],
+    store: &'a ST,
+) -> Result<usize, Error> {
+    let mut curr_event = event.clone();
+
+    'outer: loop {
+        if let Some(pos) =
+            mainline.iter().position(|e| e == curr_event.event_id())
+        {
+            return Ok(pos);
+        }
+
+        let auth_events = store.get_events(curr_event.auth_event_ids()).await?;
+        for auth_event in auth_events {
+            if (auth_event.event_type(), auth_event.state_key())
+                == ("m.room.power_levels", Some(""))
+            {
+                curr_event = auth_event;
+                continue 'outer;
+            }
+        }
+
+        return Ok(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::auth_rules::AuthV1;
+    use crate::stores::memory::MemoryEventStore;
+
 }

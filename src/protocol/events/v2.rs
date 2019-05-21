@@ -13,6 +13,8 @@ pub struct EventV2 {
     auth_events: Vec<String>,
     content: serde_json::Map<String, serde_json::Value>,
     depth: i64,
+    #[serde(skip)]
+    event_id: String,
     hashes: EventHash,
     origin: String,
     origin_server_ts: u64,
@@ -59,6 +61,7 @@ impl EventV2 {
             depth: 0,
             hashes: EventHash::Sha256("".to_string()),
             prev_events: Vec::new(),
+            event_id: "".to_string(),
         };
 
         let auth_types = R::Auth::auth_types_for_event(&event);
@@ -91,6 +94,17 @@ impl EventV2 {
             base64::STANDARD_NO_PAD,
         ));
 
+        // let redacted: EventV2 = redact(&event)?;
+
+        // let serialized =
+        //     serialize_canonically_remove_fields(redacted.clone(), &[])?;
+        // let computed_hash = Sha256::digest(&serialized);
+
+        // event.event_id = base64::encode_config(
+        //     &computed_hash,
+        //     base64::STANDARD_NO_PAD,
+        // );
+
         Ok(event)
     }
 
@@ -104,6 +118,10 @@ impl EventV2 {
 
     pub fn depth(&self) -> i64 {
         self.depth
+    }
+
+    fn event_id(&self) -> &str {
+        &self.event_id
     }
 
     pub fn hashes(&self) -> &EventHash {
@@ -153,7 +171,7 @@ impl Event for EventV2 {
     }
 
     fn event_id(&self) -> &str {
-        "" // FIXME
+        self.event_id()
     }
 
     fn event_type(&self) -> &str {
@@ -187,9 +205,11 @@ impl Event for EventV2 {
 
 impl SignedEventV2 {}
 
-pub fn redact(
-    event: SignedEventV2,
-) -> Result<SignedEventV2, serde_json::Error> {
+pub fn redact<
+    E: serde::de::DeserializeOwned,
+>(
+    event: &SignedEventV2,
+) -> Result<E, serde_json::Error> {
     let etype = event.as_ref().event_type().to_string();
     let mut content = event.as_ref().content.clone();
 
@@ -345,7 +365,7 @@ mod tests {
 
         let event: SignedEventV2 = serde_json::from_str(full_json).unwrap();
 
-        let redacted = redact(event).unwrap();
+        let redacted: SignedEventV2 = redact(&event).unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(redacted_json).unwrap(),
             serde_json::to_value(redacted).unwrap(),
