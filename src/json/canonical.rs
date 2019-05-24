@@ -4,7 +4,7 @@ use serde_json::error::Error;
 use serde_json::value::RawValue;
 use std::convert::AsRef;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Canonical<V> {
     value: V,
     raw_value: Box<RawValue>,

@@ -58,12 +58,12 @@ impl EventBuilder {
     }
 
     pub async fn build_v2<
-        R: RoomVersion<Event = v2::EventV2>,
-        E: EventStore<Event = v2::EventV2>,
+        R: RoomVersion<Event = v2::SignedEventV2>,
+        E: EventStore<Event = v2::SignedEventV2>,
     >(
         self,
         event_store: &E,
-    ) -> Result<v2::EventV2, Error> {
+    ) -> Result<v2::SignedEventV2, Error> {
         let res = await!(v2::EventV2::from_builder::<R, E>(self, event_store))?;
         Ok(res)
     }

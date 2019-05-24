@@ -289,7 +289,12 @@ async fn iterative_auth_checks<
     for event in sorted_events {
         // FIXME: Need to get auth events for auth_events.
 
-        let types = A::auth_types_for_event(event);
+        let types = A::auth_types_for_event(
+            event.event_type(),
+            event.state_key(),
+            event.sender(),
+            event.content(),
+        );
 
         let auth_events = store.get_events(event.auth_event_ids()).await?;
         let mut auth_map = S::new();

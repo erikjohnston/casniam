@@ -38,8 +38,13 @@ where
         Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
 
-    fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)> {
-        auth_types_for_event(event)
+    fn auth_types_for_event(
+        event_type: &str,
+        state_key: Option<&str>,
+        sender: &str,
+        content: &serde_json::Map<String, Value>,
+    ) -> Vec<(String, String)> {
+        auth_types_for_event(event_type, state_key, sender, content)
     }
 }
 
@@ -53,7 +58,12 @@ where
     E: Event + Clone,
     S: RoomState + Clone,
 {
-    let types = auth_types_for_event(&event);
+    let types = auth_types_for_event(
+        event.event_type(),
+        event.state_key(),
+        event.sender(),
+        event.content(),
+    );
     let auth_event_ids = state.get_event_ids(types);
 
     let auth_events_vec = await!(store.get_events(auth_event_ids))?;
@@ -597,26 +607,30 @@ fn as_int(value: &Value) -> Option<i64> {
     None
 }
 
-pub fn auth_types_for_event(event: &impl Event) -> Vec<(String, String)> {
-    if event.event_type() == "m.room.create" {
+pub fn auth_types_for_event(
+    event_type: &str,
+    state_key: Option<&str>,
+    sender: &str,
+    content: &serde_json::Map<String, Value>,
+) -> Vec<(String, String)> {
+    if event_type == "m.room.create" {
         return Vec::new();
     }
 
     let mut auth_types: Vec<(String, String)> = vec![
         ("m.room.create".into(), "".into()),
         ("m.room.power_levels".into(), "".into()),
-        ("m.room.member".into(), event.sender().into()),
+        ("m.room.member".into(), sender.into()),
     ];
 
-    if event.event_type() == "m.room.member" {
-        let membership =
-            event.content()["membership"].as_str().unwrap_or_default(); // TODO: Is this ok?
+    if event_type == "m.room.member" {
+        let membership = content["membership"].as_str().unwrap_or_default(); // TODO: Is this ok?
 
         if membership == "join" || membership == "invite" {
             auth_types.push(("m.room.join_rules".into(), "".into()));
         }
 
-        if let Some(state_key) = event.state_key() {
+        if let Some(state_key) = state_key {
             auth_types.push(("m.room.member".into(), state_key.into()));
         }
 

@@ -73,7 +73,12 @@ pub trait AuthRules {
         store: &impl EventStore<Event = Self::Event>,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
 
-    fn auth_types_for_event(event: &Self::Event) -> Vec<(String, String)>;
+    fn auth_types_for_event(
+        event_type: &str,
+        state_key: Option<&str>,
+        sender: &str,
+        content: &serde_json::Map<String, Value>,
+    ) -> Vec<(String, String)>;
 }
 
 pub trait RoomVersion {
@@ -85,10 +90,10 @@ pub trait RoomVersion {
 pub struct RoomVersion2;
 
 impl RoomVersion for RoomVersion2 {
-    type Event = events::v2::EventV2;
-    type Auth = auth_rules::AuthV1<events::v2::EventV2>;
+    type Event = events::v2::SignedEventV2;
+    type Auth = auth_rules::AuthV1<events::v2::SignedEventV2>;
     type State =
-        state::RoomStateResolverV2<auth_rules::AuthV1<events::v2::EventV2>>;
+        state::RoomStateResolverV2<auth_rules::AuthV1<events::v2::SignedEventV2>>;
 }
 
 pub trait EventStore: Clone + 'static {
@@ -542,7 +547,12 @@ mod tests {
             Box::pin(future::ok(()))
         }
 
-        fn auth_types_for_event(_event: &Self::Event) -> Vec<(String, String)> {
+        fn auth_types_for_event(
+            _event_type: &str,
+            _state_key: Option<&str>,
+            _sender: &str,
+            _content: &serde_json::Map<String, Value>,
+        ) -> Vec<(String, String)> {
             unimplemented!()
         }
     }

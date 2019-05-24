@@ -13,8 +13,6 @@ pub struct EventV2 {
     auth_events: Vec<String>,
     content: serde_json::Map<String, serde_json::Value>,
     depth: i64,
-    #[serde(skip)]
-    event_id: String,
     hashes: EventHash,
     origin: String,
     origin_server_ts: u64,
@@ -26,16 +24,53 @@ pub struct EventV2 {
     state_key: Option<String>,
 }
 
-pub type SignedEventV2 = Signed<EventV2>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedEventV2 {
+    #[serde(skip)]
+    event_id: String,
+    #[serde(flatten)]
+    signed: Signed<EventV2>,
+}
+
+impl AsRef<EventV2> for SignedEventV2 {
+    fn as_ref(&self) -> &EventV2 {
+        self.signed.as_ref()
+    }
+}
+
+impl SignedEventV2 {
+    fn from_signed(event: Signed<EventV2>) -> SignedEventV2 {
+        let redacted: EventV2 = redact(&event).expect("EventV2 should always serialize.");
+
+        let serialized =
+            serialize_canonically_remove_fields(redacted.clone(), &[])
+            .expect("EventV2 should always serialize.");
+        let computed_hash = Sha256::digest(&serialized);
+
+        let event_id = base64::encode_config(
+            &computed_hash,
+            base64::STANDARD_NO_PAD,
+        );
+
+        SignedEventV2 {
+            event_id,
+            signed: event,
+        }
+    }
+
+    fn signed(&self) -> &Signed<EventV2> {
+        &self.signed
+    }
+}
 
 impl EventV2 {
     pub async fn from_builder<
-        R: RoomVersion<Event = EventV2>,
-        E: EventStore<Event = EventV2>,
+        R: RoomVersion<Event = SignedEventV2>,
+        E: EventStore<Event = SignedEventV2>,
     >(
         builder: super::EventBuilder,
         event_store: &E,
-    ) -> Result<EventV2, Error> {
+    ) -> Result<SignedEventV2, Error> {
         let super::EventBuilder {
             event_type,
             state_key,
@@ -61,10 +96,14 @@ impl EventV2 {
             depth: 0,
             hashes: EventHash::Sha256("".to_string()),
             prev_events: Vec::new(),
-            event_id: "".to_string(),
         };
 
-        let auth_types = R::Auth::auth_types_for_event(&event);
+        let auth_types = R::Auth::auth_types_for_event(
+            event.event_type(),
+            event.state_key(),
+            event.sender(),
+            event.content(),
+        );
 
         // TODO: Only pull out a subset of the state needed.
         let state = await!(event_store.get_state_for(&prev_events))?
@@ -77,7 +116,7 @@ impl EventV2 {
         let mut depth = 0;
         let evs = await!(event_store.get_events(&prev_events))?;
         for ev in evs {
-            depth = max(ev.depth, depth);
+            depth = max(ev.depth(), depth);
         }
 
         event.depth = depth;
@@ -94,18 +133,9 @@ impl EventV2 {
             base64::STANDARD_NO_PAD,
         ));
 
-        // let redacted: EventV2 = redact(&event)?;
+        let signed = Signed::wrap(event)?;
 
-        // let serialized =
-        //     serialize_canonically_remove_fields(redacted.clone(), &[])?;
-        // let computed_hash = Sha256::digest(&serialized);
-
-        // event.event_id = base64::encode_config(
-        //     &computed_hash,
-        //     base64::STANDARD_NO_PAD,
-        // );
-
-        Ok(event)
+        Ok(SignedEventV2::from_signed(signed))
     }
 
     pub fn auth_events(&self) -> &[String] {
@@ -118,10 +148,6 @@ impl EventV2 {
 
     pub fn depth(&self) -> i64 {
         self.depth
-    }
-
-    fn event_id(&self) -> &str {
-        &self.event_id
     }
 
     pub fn hashes(&self) -> &EventHash {
@@ -157,33 +183,41 @@ impl EventV2 {
     }
 }
 
-impl Event for EventV2 {
+impl Event for SignedEventV2 {
     fn auth_event_ids(&self) -> Vec<&str> {
-        self.auth_events().iter().map(|s| s as &str).collect()
+        self.signed.as_ref()
+            .auth_events()
+            .iter()
+            .map(|s| s as &str)
+            .collect()
     }
 
     fn content(&self) -> &serde_json::Map<String, serde_json::Value> {
-        self.content()
+        self.signed.as_ref().content()
     }
 
     fn depth(&self) -> i64 {
-        self.depth()
+        self.signed.as_ref().depth()
     }
 
     fn event_id(&self) -> &str {
-        self.event_id()
+        unimplemented!() // FIXME
     }
 
     fn event_type(&self) -> &str {
-        self.event_type()
+        self.signed.as_ref().event_type()
     }
 
     fn origin_server_ts(&self) -> u64 {
-        self.origin_server_ts
+        self.signed.as_ref().origin_server_ts
     }
 
     fn prev_event_ids(&self) -> Vec<&str> {
-        self.prev_events().iter().map(|s| s as &str).collect()
+        self.signed.as_ref()
+            .prev_events()
+            .iter()
+            .map(|s| s as &str)
+            .collect()
     }
 
     fn redacts(&self) -> Option<&str> {
@@ -191,24 +225,22 @@ impl Event for EventV2 {
     }
 
     fn room_id(&self) -> &str {
-        self.room_id()
+        self.signed.as_ref().room_id()
     }
 
     fn sender(&self) -> &str {
-        self.sender()
+        self.signed.as_ref().sender()
     }
 
     fn state_key(&self) -> Option<&str> {
-        self.state_key()
+        self.signed.as_ref().state_key()
     }
 }
 
 impl SignedEventV2 {}
 
-pub fn redact<
-    E: serde::de::DeserializeOwned,
->(
-    event: &SignedEventV2,
+pub fn redact<E: serde::de::DeserializeOwned>(
+    event: &Signed<EventV2>,
 ) -> Result<E, serde_json::Error> {
     let etype = event.as_ref().event_type().to_string();
     let mut content = event.as_ref().content.clone();
@@ -365,7 +397,7 @@ mod tests {
 
         let event: SignedEventV2 = serde_json::from_str(full_json).unwrap();
 
-        let redacted: SignedEventV2 = redact(&event).unwrap();
+        let redacted: SignedEventV2 = redact(event.signed()).unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(redacted_json).unwrap(),
             serde_json::to_value(redacted).unwrap(),
