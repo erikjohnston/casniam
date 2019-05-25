@@ -101,6 +101,11 @@ pub trait EventStore: Clone + 'static {
     type RoomState: RoomState;
     type RoomVersion: RoomVersion<Event = Self::Event>;
 
+    fn insert_events(
+        &self,
+        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+    ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
+
     fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,

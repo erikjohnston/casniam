@@ -146,6 +146,13 @@ impl EventStore for DummyStore {
     type RoomState = StateMap<String>;
     type RoomVersion = RoomVersionV1;
 
+    fn insert_events(
+        &self,
+        _events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+        unimplemented!()
+    }
+
     fn missing_events<
         'a,
         I: IntoIterator<Item = impl AsRef<str> + ToString>,

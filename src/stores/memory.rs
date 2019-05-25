@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 #[derive(Default)]
 pub struct MemoryEventStoreInner<R: RoomVersion> {
     event_map: BTreeMap<String, R::Event>,
-    state_map: BTreeMap<String, StateMap<R::Event>>,
+    state_map: BTreeMap<String, StateMap<String>>,
 }
 
 pub type MemoryEventStore<R> = Arc<RwLock<MemoryEventStoreInner<R>>>;
@@ -25,6 +25,19 @@ where
     type Event = R::Event;
     type RoomState = StateMap<String>;
     type RoomVersion = R;
+
+    fn insert_events(
+        &self,
+        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+        let mut store = self.write().expect("Mutex poisoned");
+        for (event, state) in events {
+            store.state_map.insert(event.event_id().to_string(), state);
+            store.event_map.insert(event.event_id().to_string(), event);
+        }
+
+        future::ok(()).boxed()
+    }
 
     fn missing_events<
         'a,
@@ -74,7 +87,7 @@ where
                 if let Some(state) = store.state_map.get(e_id.as_ref()) {
                     let state_ids = state
                         .iter()
-                        .map(|(k, e)| (k, e.event_id().to_string()))
+                        .map(|(k, e)| (k, e.to_string()))
                         .collect();
                     states.push(state_ids)
                 } else {
