@@ -40,17 +40,16 @@ impl AsRef<EventV2> for SignedEventV2 {
 
 impl SignedEventV2 {
     fn from_signed(event: Signed<EventV2>) -> SignedEventV2 {
-        let redacted: EventV2 = redact(&event).expect("EventV2 should always serialize.");
+        let redacted: EventV2 =
+            redact(&event).expect("EventV2 should always serialize.");
 
         let serialized =
             serialize_canonically_remove_fields(redacted.clone(), &[])
-            .expect("EventV2 should always serialize.");
+                .expect("EventV2 should always serialize.");
         let computed_hash = Sha256::digest(&serialized);
 
-        let event_id = base64::encode_config(
-            &computed_hash,
-            base64::STANDARD_NO_PAD,
-        );
+        let event_id =
+            base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD);
 
         SignedEventV2 {
             event_id,
@@ -185,7 +184,8 @@ impl EventV2 {
 
 impl Event for SignedEventV2 {
     fn auth_event_ids(&self) -> Vec<&str> {
-        self.signed.as_ref()
+        self.signed
+            .as_ref()
             .auth_events()
             .iter()
             .map(|s| s as &str)
@@ -201,7 +201,7 @@ impl Event for SignedEventV2 {
     }
 
     fn event_id(&self) -> &str {
-        unimplemented!() // FIXME
+        &self.event_id
     }
 
     fn event_type(&self) -> &str {
@@ -213,7 +213,8 @@ impl Event for SignedEventV2 {
     }
 
     fn prev_event_ids(&self) -> Vec<&str> {
-        self.signed.as_ref()
+        self.signed
+            .as_ref()
             .prev_events()
             .iter()
             .map(|s| s as &str)

@@ -400,6 +400,132 @@ async fn get_mainline_depth_for_event<
 mod tests {
     use super::*;
     use crate::protocol::auth_rules::AuthV1;
-    use crate::stores::memory::MemoryEventStore;
+    use crate::protocol::events::{v2, EventBuilder};
+    use crate::protocol::RoomVersion2;
+    use crate::state_map::StateMap;
+    use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
+    use futures::executor::block_on;
+
+    use std::iter::once;
+
+    fn create_event(
+        store: &MemoryEventStore<RoomVersion2>,
+        event_type: &str,
+        state_key: Option<&str>,
+        sender: &str,
+        content: Option<serde_json::Value>,
+        prev_events: Vec<String>,
+    ) -> String {
+        let mut builder =
+            EventBuilder::new("fake_room_id", sender, event_type, state_key);
+
+        if let Some(m) = content {
+            builder.with_content(m.as_object().unwrap().clone());
+        }
+
+        let mut state = block_on(store.get_state_for(&prev_events))
+            .unwrap()
+            .unwrap();
+
+        builder.with_prev_events(prev_events);
+
+        let event =
+            block_on(builder.build_v2::<RoomVersion2, _>(store)).unwrap();
+
+        if let Some(s) = state_key {
+            state.insert(event_type, s, event.event_id().to_string());
+        }
+
+        println!("{:#?}", state);
+
+        let event_id = event.event_id().to_string();
+
+        block_on(store.insert_events(once((event, state.clone())))).unwrap();
+
+        event_id
+    }
+
+    #[test]
+    fn basic_test() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: "100",
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let jr1 = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "private",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[imb, jr1])).unwrap().unwrap();
+
+        assert!(!final_state.contains_key("m.room.member", bob));
+
+        println!("{:#?}", store);
+
+        panic!()
+    }
 }

@@ -87,13 +87,15 @@ pub trait RoomVersion {
     type Auth: AuthRules<Event = Self::Event>;
 }
 
+#[derive(Clone, Copy, Debug, Default)]
 pub struct RoomVersion2;
 
 impl RoomVersion for RoomVersion2 {
     type Event = events::v2::SignedEventV2;
     type Auth = auth_rules::AuthV1<events::v2::SignedEventV2>;
-    type State =
-        state::RoomStateResolverV2<auth_rules::AuthV1<events::v2::SignedEventV2>>;
+    type State = state::RoomStateResolverV2<
+        auth_rules::AuthV1<events::v2::SignedEventV2>,
+    >;
 }
 
 pub trait EventStore: Clone + 'static {
@@ -577,6 +579,13 @@ mod tests {
         type Event = TestEvent;
         type RoomState = StateMap<String>;
         type RoomVersion = DummyVersion;
+
+        fn insert_events(
+            &self,
+            events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+        ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+            unimplemented!()
+        }
 
         fn missing_events<
             'a,

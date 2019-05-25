@@ -9,13 +9,20 @@ use std::mem::swap;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct MemoryEventStoreInner<R: RoomVersion> {
     event_map: BTreeMap<String, R::Event>,
     state_map: BTreeMap<String, StateMap<String>>,
 }
 
 pub type MemoryEventStore<R> = Arc<RwLock<MemoryEventStoreInner<R>>>;
+
+pub fn new_memory_store<R: RoomVersion>() -> MemoryEventStore<R> {
+    Arc::new(RwLock::new(MemoryEventStoreInner {
+        event_map: BTreeMap::new(),
+        state_map: BTreeMap::new(),
+    }))
+}
 
 impl<R> EventStore for MemoryEventStore<R>
 where
@@ -31,6 +38,7 @@ where
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
     ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
         let mut store = self.write().expect("Mutex poisoned");
+
         for (event, state) in events {
             store.state_map.insert(event.event_id().to_string(), state);
             store.event_map.insert(event.event_id().to_string(), event);
@@ -84,12 +92,25 @@ where
         {
             let store = self.read().expect("Mutex poisoned");
             for e_id in event_ids {
-                if let Some(state) = store.state_map.get(e_id.as_ref()) {
-                    let state_ids = state
-                        .iter()
-                        .map(|(k, e)| (k, e.to_string()))
-                        .collect();
-                    states.push(state_ids)
+                let e_id = e_id.as_ref();
+
+                if let (Some(state), Some(event)) =
+                    (store.state_map.get(e_id), store.event_map.get(e_id))
+                {
+                    let mut state_ids: Self::RoomState =
+                        state.iter().map(|(k, e)| (k, e.to_string())).collect();
+
+                    // Since we're getting the resolved state we need to add the
+                    // event itself if its a state event.
+                    if let Some(state_key) = event.state_key() {
+                        state_ids.insert(
+                            event.event_type(),
+                            state_key,
+                            event.event_id().to_string(),
+                        );
+                    }
+
+                    states.push(state_ids);
                 } else {
                     // We don't have all the state.
                     return future::ok(None).boxed();
