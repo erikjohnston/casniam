@@ -87,13 +87,13 @@ fn get_conflicted_events<S: RoomState>(
         let mut is_key_conflicted = false;
         for state in states {
             if let Some(e) = state.get(t, s) {
-                if is_key_conflicted || curr_event_id != Some(e) {
+                if curr_event_id.is_none() {
+                    curr_event_id = Some(e);
+                } else if is_key_conflicted || curr_event_id != Some(e) {
                     is_key_conflicted = true;
 
                     let key = (t.to_string(), s.to_string());
                     conflicted.entry(key).or_default().insert(e.to_string());
-                } else if curr_event_id.is_none() {
-                    curr_event_id = Some(e);
                 }
             } else {
                 is_key_conflicted = true;
@@ -287,8 +287,6 @@ async fn iterative_auth_checks<
     let mut new_state = base_state.clone();
 
     for event in sorted_events {
-        // FIXME: Need to get auth events for auth_events.
-
         let types = A::auth_types_for_event(
             event.event_type(),
             event.state_key(),
@@ -401,7 +399,7 @@ mod tests {
     use super::*;
     use crate::protocol::auth_rules::AuthV1;
     use crate::protocol::events::{v2, EventBuilder};
-    use crate::protocol::RoomVersion2;
+    use crate::protocol::{RoomVersion2, RoomStateResolver, RoomVersion};
     use crate::state_map::StateMap;
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
@@ -437,13 +435,51 @@ mod tests {
             state.insert(event_type, s, event.event_id().to_string());
         }
 
-        println!("{:#?}", state);
-
         let event_id = event.event_id().to_string();
 
         block_on(store.insert_events(once((event, state.clone())))).unwrap();
 
         event_id
+    }
+
+    #[test]
+    fn test_get_conflicted_events() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            "@alice:test",
+            None,
+            vec![],
+        );
+
+        let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
+
+        let (unconflicted, _) = get_conflicted_events(&[state.clone()]);
+
+        assert_eq!(unconflicted, state);
+    }
+
+    #[test]
+    fn resolve_single() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            "@alice:test",
+            None,
+            vec![],
+        );
+
+        let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
+
+        let resolved = block_on(<RoomVersion2 as RoomVersion>::State::resolve_state(vec![state], &store)).unwrap();
+
+        assert_eq!(resolved.len(), 1);
     }
 
     #[test]
