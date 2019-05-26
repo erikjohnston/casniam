@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::fmt::Debug;
 use std::iter;
 use std::pin::Pin;
 
@@ -40,15 +41,12 @@ pub trait RoomStateResolver {
     ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
 }
 
-pub trait RoomState: Clone + 'static {
+pub trait RoomState: Clone + Debug + 'static {
     fn new() -> Self;
 
-    fn add_event<'a>(
-        &mut self,
-        etype: String,
-        state_key: String,
-        event_id: String,
-    );
+    fn add_event(&mut self, etype: String, state_key: String, event_id: String);
+
+    fn remove(&mut self, etype: &str, state_key: &str);
 
     fn get(
         &self,

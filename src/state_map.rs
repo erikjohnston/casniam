@@ -178,6 +178,28 @@ where
         };
     }
 
+    pub fn remove(&mut self, t: &str, s: &str) {
+        if s == "" {
+            if let Some(key) = WellKnownEmptyKeys::from_str(t) {
+                self.well_known.remove(&key);
+                return;
+            }
+        }
+
+        match (t, s) {
+            (TYPE_MEMBERSHIP, user) => self.membership.remove(user.into()),
+            (TYPE_ALIASES, server) => self.aliases.remove(server.into()),
+            (TYPE_THIRD_PARTY_INVITE, token) => {
+                self.invites.remove(token.into())
+            }
+
+            (t, s) => self
+                .others
+                .get_mut(t.into())
+                .and_then(|m| m.remove(s.into())),
+        };
+    }
+
     pub fn contains_key(&self, t: &str, s: &str) -> bool {
         self.get(t, s).is_some()
     }

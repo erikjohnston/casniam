@@ -36,6 +36,9 @@ where
                 conflicted_auth_chain,
             ) = get_conflicted_set(&store, &states).await?;
 
+            println!("unconflicted: {:#?}", unconflicted);
+            println!("conflicted_auth_chain: {:#?}", conflicted_auth_chain);
+
             sort_by_reverse_topological_power_ordering(
                 &mut conflicted_power_events,
                 &conflicted_auth_chain,
@@ -43,12 +46,16 @@ where
             )
             .await?;
 
+            println!("conflicted_power_events: {:#?}", conflicted_power_events);
+
             let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_power_events,
                 &unconflicted,
                 &store,
             )
             .await?;
+
+            println!("Resolved: {:#?}", resolved);
 
             let power_level_id =
                 resolved.get("m.room.power_levels", "").unwrap_or_default();
@@ -89,16 +96,18 @@ fn get_conflicted_events<S: RoomState>(
         let mut is_key_conflicted = false;
         for state in states {
             if let Some(e) = state.get(t, s) {
-                if curr_event_id.is_none() {
+                if !is_key_conflicted && curr_event_id.is_none() {
                     curr_event_id = Some(e);
                 } else if is_key_conflicted || curr_event_id != Some(e) {
                     is_key_conflicted = true;
+                    curr_event_id = None;
 
                     let key = (t.to_string(), s.to_string());
                     conflicted.entry(key).or_default().insert(e.to_string());
                 }
             } else {
                 is_key_conflicted = true;
+                curr_event_id = None;
 
                 let key = (t.to_string(), s.to_string());
                 conflicted.entry(key).or_default();
@@ -117,7 +126,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     store: &'a ST,
     states: &'a [S],
 ) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>, Vec<ST::Event>), Error> {
-    let (unconflicted, _) = get_conflicted_events(states);
+    let (unconflicted, conflicted_keys) = get_conflicted_events(states);
 
     let mut state_sets = Vec::with_capacity(states.len());
     for state in states {
@@ -125,13 +134,9 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
             .borrow()
             .keys()
             .into_iter()
-            .filter_map(|key| match key {
-                ("m.room.create", "") => Some(key),
-                ("m.room.power_levels", "") => Some(key),
-                ("m.room.join_rules", "") => Some(key),
-                ("m.room.member", _) => Some(key),
-                ("m.room.third_party_invite", _) => Some(key),
-                _ => None,
+            .filter(|key| {
+                conflicted_keys
+                    .contains_key(&(key.0.to_string(), key.1.to_string()))
             })
             .filter_map(|key| state.borrow().get(key.0, key.1))
             .collect();
@@ -139,25 +144,60 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
         state_sets.push(state_set);
     }
 
-    let full_conflicted_set =
-        await!(store.get_conflicted_auth_chain(state_sets))?;
+    let mut full_conflicted_set: BTreeMap<_, _> =
+        await!(store.get_conflicted_auth_chain(state_sets.clone()))?
+            .into_iter()
+            .map(|e| (e.event_id().to_string(), e))
+            .collect();
+
+    let mut missing = Vec::new();
+    for state_set in state_sets {
+        for ev in state_set {
+            if !full_conflicted_set.contains_key(ev) {
+                missing.push(ev);
+            }
+        }
+    }
+
+    let missing_evs = await!(store.get_events(&missing))?;
+    full_conflicted_set.extend(
+        missing_evs
+            .into_iter()
+            .map(|e| (e.event_id().to_string(), e)),
+    );
 
     let mut conflicted_power_events = Vec::new();
-    let mut conflicted_standard_events = Vec::new();
+    let mut conflicted_standard_events = BTreeMap::new();
 
-    for ev in full_conflicted_set.clone() {
-        if is_power_event(&ev) {
-            conflicted_power_events.push(ev);
+    for (_, ev) in &full_conflicted_set {
+        if is_power_event(ev) {
+            conflicted_power_events.push(ev.clone());
         } else {
-            conflicted_standard_events.push(ev);
+            conflicted_standard_events.insert(ev.event_id(), ev.clone());
+        }
+    }
+
+    // We need to move all conflicted_standard_events that are in the power
+    // events auth chain into conflicted_power_events
+    // FIXME: So much cloning...
+    let mut stack: Vec<_> = conflicted_power_events.iter().cloned().collect();
+    while let Some(ev) = stack.pop() {
+        if let Some(ee) = conflicted_standard_events.remove(ev.event_id()) {
+            conflicted_power_events.push(ee);
+        }
+
+        for aid in ev.auth_event_ids() {
+            if let Some(aev) = full_conflicted_set.get(aid) {
+                stack.push(aev.clone());
+            }
         }
     }
 
     Ok((
         unconflicted,
         conflicted_power_events,
-        conflicted_standard_events,
-        full_conflicted_set,
+        conflicted_standard_events.into_iter().map(|(_, e)| e).collect(),
+        full_conflicted_set.into_iter().map(|(_, e)| e).collect(),
     ))
 }
 
@@ -199,18 +239,20 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
     while let Some(e_id) = to_add.pop() {
         let ev = auth_diff_map[e_id];
 
-        graph.add_node(e_id);
-
         for aid in ev.auth_event_ids() {
             if auth_diff_map.contains_key(aid) {
-                graph.add_edge(e_id, aid, 0);
-
+                // This needs to happen before we add an edge, as adding the
+                // edge inserts the node.
                 if !graph.contains_node(aid) {
                     to_add.push(aid);
                 }
+
+                graph.add_edge(e_id, aid, 0);
             }
         }
         let pl = await!(get_power_level_for_sender(ev, store))?;
+
+        graph.add_node(e_id);
         ordering.insert(e_id, (-pl, ev.origin_server_ts(), e_id));
     }
 
@@ -230,7 +272,7 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
         graph.remove_node(node);
     }
 
-    events.sort_by_key(|e| ordered[e.event_id()]);
+    events.sort_by_key(|e| -ordered[e.event_id()]);
 
     Ok(())
 }
@@ -318,11 +360,18 @@ async fn iterative_auth_checks<
         let auth_events = store.get_events(event.auth_event_ids()).await?;
         let mut auth_map = S::new();
         for e in auth_events {
-            auth_map.add_event(
-                e.event_type().to_string(),
-                e.state_key().expect("should be state event").to_string(),
-                e.event_id().to_string(),
-            );
+            if let Some(state_key) = e.state_key() {
+                if types.contains(&(
+                    e.event_type().to_string(),
+                    state_key.to_string(),
+                )) {
+                    auth_map.add_event(
+                        e.event_type().to_string(),
+                        state_key.to_string(),
+                        e.event_id().to_string(),
+                    );
+                }
+            }
         }
 
         for (t, s) in types {
@@ -332,6 +381,13 @@ async fn iterative_auth_checks<
         }
 
         let result = A::check(event, &auth_map, store).await;
+
+        println!(
+            "Auth check for {} passed: {}",
+            event.event_id(),
+            result.is_ok()
+        );
+
         if result.is_ok() {
             new_state.add_event(
                 event.event_type().to_string(),
@@ -518,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_test() {
+    fn join_rule_evasion() {
         let store: MemoryEventStore<RoomVersion2> = new_memory_store();
 
         let alice = "@alice:test";
@@ -551,7 +607,7 @@ mod tests {
             alice,
             Some(json!({
                 "users": {
-                    alice: "100",
+                    alice: 100,
                 },
             })),
             vec![ima.clone()],
@@ -593,10 +649,137 @@ mod tests {
         let final_state =
             block_on(store.get_state_for(&[imb, jr1])).unwrap().unwrap();
 
+        assert!(!final_state.contains_key("m.room.member", bob));
+    }
+
+    #[test]
+    fn ban_vs_pl() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let pa = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![imb.clone()],
+        );
+
+        let ma = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![pa.clone()],
+        );
+
+        let mb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            alice,
+            Some(json!({
+                "membership": "ban",
+            })),
+            vec![ma.clone()],
+        );
+
+        let pb = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            bob,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![pa.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[mb.clone(), pb.clone()]))
+                .unwrap()
+                .unwrap();
+
         println!("{:#?}", final_state);
 
-        assert!(!final_state.contains_key("m.room.member", bob));
-
-        panic!()
+        assert_eq!(
+            final_state.get("m.room.power_levels", ""),
+            Some(&pa),
+            "Testing power levels match"
+        );
+        assert_eq!(
+            final_state.get("m.room.member", bob),
+            Some(&mb),
+            "Testing bobs membership match"
+        );
     }
 }

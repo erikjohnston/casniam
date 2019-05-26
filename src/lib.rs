@@ -22,13 +22,17 @@ impl RoomState for StateMap<String> {
         StateMap::new()
     }
 
-    fn add_event<'a>(
+    fn add_event(
         &mut self,
         etype: String,
         state_key: String,
         event_id: String,
     ) {
         self.insert(&etype, &state_key, event_id);
+    }
+
+    fn remove(&mut self, etype: &str, state_key: &str) {
+        self.remove(etype, state_key);
     }
 
     fn get(

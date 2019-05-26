@@ -30,7 +30,7 @@ impl EventBuilder {
             room_id: room_id.to_string(),
             prev_events: Vec::new(),
             content: serde_json::Map::new(),
-            origin_server_ts: 0, // FIXME,
+            origin_server_ts: chrono::Utc::now().timestamp_millis() as u64,
         }
     }
 
