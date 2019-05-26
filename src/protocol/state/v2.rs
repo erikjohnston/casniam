@@ -33,10 +33,12 @@ where
                 unconflicted,
                 mut conflicted_power_events,
                 mut conflicted_standard_events,
+                conflicted_auth_chain,
             ) = get_conflicted_set(&store, &states).await?;
 
             sort_by_reverse_topological_power_ordering(
                 &mut conflicted_power_events,
+                &conflicted_auth_chain,
                 &store,
             )
             .await?;
@@ -114,7 +116,7 @@ fn get_conflicted_events<S: RoomState>(
 async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     store: &'a ST,
     states: &'a [S],
-) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>), Error> {
+) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>, Vec<ST::Event>), Error> {
     let (unconflicted, _) = get_conflicted_events(states);
 
     let mut state_sets = Vec::with_capacity(states.len());
@@ -143,7 +145,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     let mut conflicted_power_events = Vec::new();
     let mut conflicted_standard_events = Vec::new();
 
-    for ev in full_conflicted_set {
+    for ev in full_conflicted_set.clone() {
         if is_power_event(&ev) {
             conflicted_power_events.push(ev);
         } else {
@@ -155,6 +157,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
         unconflicted,
         conflicted_power_events,
         conflicted_standard_events,
+        full_conflicted_set,
     ))
 }
 
@@ -181,17 +184,34 @@ fn is_power_event(event: &impl Event) -> bool {
 
 async fn sort_by_reverse_topological_power_ordering<'a>(
     events: &'a mut Vec<impl Event>,
+    auth_diff: &'a [impl Event],
     store: &'a impl EventStore,
 ) -> Result<(), Error> {
+    let auth_diff_map: BTreeMap<_, _> = auth_diff
+        .iter()
+        .map(|e| (e.event_id().to_string(), e))
+        .collect();
+
     let mut graph = DiGraphMap::new();
     let mut ordering = BTreeMap::new();
-    for ev in events.iter() {
+
+    let mut to_add: Vec<_> = events.iter().map(|e| e.event_id()).collect();
+    while let Some(e_id) = to_add.pop() {
+        let ev = auth_diff_map[e_id];
+
+        graph.add_node(e_id);
+
         for aid in ev.auth_event_ids() {
-            graph.add_edge(ev.event_id(), aid, 0);
+            if auth_diff_map.contains_key(aid) {
+                graph.add_edge(e_id, aid, 0);
+
+                if !graph.contains_node(aid) {
+                    to_add.push(aid);
+                }
+            }
         }
         let pl = await!(get_power_level_for_sender(ev, store))?;
-        ordering
-            .insert(ev.event_id(), (-pl, ev.origin_server_ts(), ev.event_id()));
+        ordering.insert(e_id, (-pl, ev.origin_server_ts(), e_id));
     }
 
     let mut graph = graph.into_graph::<u32>();
@@ -199,9 +219,10 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
     let mut ordered = BTreeMap::new();
     let mut idx = 0;
     while let Some(node) = {
-        graph
-            .externals(Direction::Incoming)
-            .max_by_key(|e| &ordering[graph[*e]])
+        graph.externals(Direction::Incoming).max_by_key(|e| {
+            let ev_id = graph[*e];
+            &ordering[ev_id]
+        })
     } {
         let ev_id = graph[node];
         ordered.insert(ev_id.to_string(), idx);
@@ -338,13 +359,22 @@ async fn mainline_ordering<
     let mut mainline = Vec::new();
 
     let mut p = resolved_power_id.to_string();
-    loop {
+    'outer: loop {
         mainline.push(p.clone());
-        if let Some(a) = store.get_event(p).await? {
-            p = a.event_id().to_string();
-        } else {
-            break;
+        if let Some(power_ev) = store.get_event(&p).await? {
+            let auth_events =
+                store.get_events(power_ev.auth_event_ids()).await?;
+            for auth_event in auth_events {
+                if (auth_event.event_type(), auth_event.state_key())
+                    == ("m.room.power_levels", Some(""))
+                {
+                    p = auth_event.event_id().to_string();
+                    continue 'outer;
+                }
+            }
         }
+
+        break;
     }
 
     let mut order_map = BTreeMap::new();
@@ -399,7 +429,7 @@ mod tests {
     use super::*;
     use crate::protocol::auth_rules::AuthV1;
     use crate::protocol::events::{v2, EventBuilder};
-    use crate::protocol::{RoomVersion2, RoomStateResolver, RoomVersion};
+    use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion2};
     use crate::state_map::StateMap;
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
@@ -477,7 +507,12 @@ mod tests {
 
         let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
 
-        let resolved = block_on(<RoomVersion2 as RoomVersion>::State::resolve_state(vec![state], &store)).unwrap();
+        let resolved =
+            block_on(<RoomVersion2 as RoomVersion>::State::resolve_state(
+                vec![state],
+                &store,
+            ))
+            .unwrap();
 
         assert_eq!(resolved.len(), 1);
     }
@@ -558,9 +593,9 @@ mod tests {
         let final_state =
             block_on(store.get_state_for(&[imb, jr1])).unwrap().unwrap();
 
-        assert!(!final_state.contains_key("m.room.member", bob));
+        println!("{:#?}", final_state);
 
-        println!("{:#?}", store);
+        assert!(!final_state.contains_key("m.room.member", bob));
 
         panic!()
     }
