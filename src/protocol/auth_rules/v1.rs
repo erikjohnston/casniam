@@ -420,8 +420,13 @@ where
             }
 
             if let Some(l) = old_level {
-                if l.0 >= user_level {
-                    bail!("old level higher for {} greater than users", user);
+                if l.0 > user_level {
+                    bail!(
+                        "old level higher for {} greater than users: {} > {}",
+                        user,
+                        l.0,
+                        user_level
+                    );
                 }
             }
 

@@ -67,6 +67,8 @@ where
             )
             .await?;
 
+            println!("conflicted_standard_events: {:#?}", conflicted_standard_events);
+
             let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_standard_events,
                 &resolved,
@@ -196,7 +198,10 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     Ok((
         unconflicted,
         conflicted_power_events,
-        conflicted_standard_events.into_iter().map(|(_, e)| e).collect(),
+        conflicted_standard_events
+            .into_iter()
+            .map(|(_, e)| e)
+            .collect(),
         full_conflicted_set.into_iter().map(|(_, e)| e).collect(),
     ))
 }
@@ -382,11 +387,7 @@ async fn iterative_auth_checks<
 
         let result = A::check(event, &auth_map, store).await;
 
-        println!(
-            "Auth check for {} passed: {}",
-            event.event_id(),
-            result.is_ok()
-        );
+        println!("Auth check for {} passed: {:?}", event.event_id(), result,);
 
         if result.is_ok() {
             new_state.add_event(
@@ -444,6 +445,7 @@ async fn mainline_ordering<
     }
 
     events.sort_by_key(|e| &order_map[e.event_id()]);
+    events.reverse();
 
     Ok(())
 }
@@ -780,6 +782,589 @@ mod tests {
             final_state.get("m.room.member", bob),
             Some(&mb),
             "Testing bobs membership match"
+        );
+    }
+
+    #[test]
+    fn offtopic_pl() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+        let charlie = "@charlie:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let imc = create_event(
+            &store,
+            "m.room.member",
+            Some(charlie),
+            charlie,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![imb.clone()],
+        );
+
+        let pa = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![imc.clone()],
+        );
+
+        let pb = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            bob,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                    charlie: 50,
+                },
+            })),
+            vec![pa.clone()],
+        );
+
+        let pc = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            charlie,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                    charlie: 0,
+                },
+            })),
+            vec![pb.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[pb.clone(), pc.clone()]))
+                .unwrap()
+                .unwrap();
+
+        println!("{:#?}", final_state);
+
+        assert_eq!(
+            final_state.get("m.room.power_levels", ""),
+            Some(&pc),
+            "Testing power levels match"
+        );
+    }
+
+    #[test]
+    fn topic_basic() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let t1 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![imb.clone()],
+        );
+
+        let pa1 = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![t1.clone()],
+        );
+
+        let t2 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![pa1.clone()],
+        );
+
+        let pa2 = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 0,
+                },
+            })),
+            vec![t2.clone()],
+        );
+
+        let pb = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            bob,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![pa1.clone()],
+        );
+
+        let t3 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            bob,
+            None,
+            vec![pb.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[pa2.clone(), t3.clone()]))
+                .unwrap()
+                .unwrap();
+
+        println!("{:#?}", final_state);
+
+        assert_eq!(
+            final_state.get("m.room.power_levels", ""),
+            Some(&pa2),
+            "Testing power levels match"
+        );
+
+        assert_eq!(
+            final_state.get("m.room.topic", ""),
+            Some(&t2),
+            "Testing topics match"
+        );
+    }
+
+    #[test]
+    fn topic_reset() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let t1 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![imb.clone()],
+        );
+
+        let pa = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![t1.clone()],
+        );
+
+        let t2 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            bob,
+            None,
+            vec![pa.clone()],
+        );
+
+       let mb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            alice,
+            Some(json!({
+                "membership": "ban",
+            })),
+            vec![t2.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[mb.clone(), t1.clone()]))
+                .unwrap()
+                .unwrap();
+
+        println!("{:#?}", final_state);
+
+        assert_eq!(
+            final_state.get("m.room.power_levels", ""),
+            Some(&pa),
+            "Testing power levels match"
+        );
+
+        assert_eq!(
+            final_state.get("m.room.topic", ""),
+            Some(&t1),
+            "Testing topics match"
+        );
+
+        assert_eq!(
+            final_state.get("m.room.member", bob),
+            Some(&mb),
+            "Testing bobs membership match"
+        );
+    }
+
+    #[test]
+    fn topic() {
+        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+
+        let alice = "@alice:test";
+        let bob = "@bob:test";
+
+        let create = create_event(
+            &store,
+            "m.room.create",
+            Some(""),
+            alice,
+            None,
+            vec![],
+        );
+
+        let ima = create_event(
+            &store,
+            "m.room.member",
+            Some(alice),
+            alice,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![create.clone()],
+        );
+
+        let ipower = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                },
+            })),
+            vec![ima.clone()],
+        );
+
+        let ijr = create_event(
+            &store,
+            "m.room.join_rules",
+            Some(""),
+            alice,
+            Some(json!({
+                "join_rule": "public",
+            })),
+            vec![ipower.clone()],
+        );
+
+        let imb = create_event(
+            &store,
+            "m.room.member",
+            Some(bob),
+            bob,
+            Some(json!({
+                "membership": "join",
+            })),
+            vec![ijr.clone()],
+        );
+
+        let t1 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![imb.clone()],
+        );
+
+        let pa1 = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![t1.clone()],
+        );
+
+        let t2 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![pa1.clone()],
+        );
+
+        let pa2 = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            alice,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 0,
+                },
+            })),
+            vec![t2.clone()],
+        );
+
+        let pb = create_event(
+            &store,
+            "m.room.power_levels",
+            Some(""),
+            bob,
+            Some(json!({
+                "users": {
+                    alice: 100,
+                    bob: 50,
+                },
+            })),
+            vec![pa1.clone()],
+        );
+
+        let t3 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            bob,
+            None,
+            vec![pb.clone()],
+        );
+
+        let msg = create_event(
+            &store,
+            "m.room.message",
+            None,
+            alice,
+            None,
+            vec![pa2.clone(), t3.clone()],
+        );
+
+        let t4 = create_event(
+            &store,
+            "m.room.topic",
+            Some(""),
+            alice,
+            None,
+            vec![msg.clone()],
+        );
+
+        let final_state =
+            block_on(store.get_state_for(&[msg.clone(), t4.clone()]))
+                .unwrap()
+                .unwrap();
+
+        println!("{:#?}", final_state);
+
+        assert_eq!(
+            final_state.get("m.room.power_levels", ""),
+            Some(&pa2),
+            "Testing power levels match"
+        );
+
+        assert_eq!(
+            final_state.get("m.room.topic", ""),
+            Some(&t4),
+            "Testing topics match"
         );
     }
 }
