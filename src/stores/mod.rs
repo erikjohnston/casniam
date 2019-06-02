@@ -1,13 +1,12 @@
 use crate::protocol::{Event, RoomState, RoomVersion};
 
+use std::collections::BTreeSet;
 use std::future::Future;
+use std::iter;
 use std::pin::Pin;
 
 use failure::Error;
-
 use futures::FutureExt;
-
-use std::iter;
 
 pub mod memory;
 
@@ -49,4 +48,18 @@ pub trait EventStore: Clone + 'static {
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
+}
+
+pub trait RoomStore: Clone + 'static {
+    type Event: Event;
+
+    fn insert_events(
+        &self,
+        events: impl IntoIterator<Item = Self::Event>,
+    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>>;
+
+    fn get_forward_extremities(
+        &self,
+        room_id: String,
+    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>>;
 }
