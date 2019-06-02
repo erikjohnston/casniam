@@ -9,8 +9,9 @@ use futures::Future;
 use serde_json::{self, Value};
 
 use crate::protocol::AuthRules;
-use crate::protocol::{Event, EventStore, RoomState};
+use crate::protocol::{Event, RoomState};
 use crate::state_map::StateMap;
+use crate::stores::EventStore;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string

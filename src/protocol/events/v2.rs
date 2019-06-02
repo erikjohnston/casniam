@@ -1,7 +1,8 @@
 use crate::json::signed::Signed;
 
 use crate::protocol::json::serialize_canonically_remove_fields;
-use crate::protocol::{AuthRules, Event, EventStore, RoomState, RoomVersion};
+use crate::protocol::{AuthRules, Event, RoomState, RoomVersion};
+use crate::stores::EventStore;
 
 use base64;
 use failure::Error;

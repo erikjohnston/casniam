@@ -21,10 +21,11 @@ use rand::{thread_rng, Rng};
 
 use casniam::protocol::v1::EventV1;
 use casniam::protocol::{
-    auth_rules, DagChunkFragment, Event, EventStore, Handler, RoomState,
-    RoomStateResolver, RoomVersion,
+    auth_rules, DagChunkFragment, Event, Handler, RoomState, RoomStateResolver,
+    RoomVersion,
 };
 use casniam::state_map::StateMap;
+use casniam::stores::EventStore;
 
 struct DummyStateResolver;
 

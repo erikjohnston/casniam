@@ -9,9 +9,8 @@ use futures::future::FutureExt;
 use petgraph::{graphmap::DiGraphMap, Direction};
 use serde_json::Value;
 
-use crate::protocol::{
-    AuthRules, Event, EventStore, RoomState, RoomStateResolver,
-};
+use crate::protocol::{AuthRules, Event, RoomState, RoomStateResolver};
+use crate::stores::EventStore;
 
 pub struct RoomStateResolverV2<A> {
     _auth: PhantomData<A>,

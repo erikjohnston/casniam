@@ -1,4 +1,6 @@
-use futures::future::{Future, FutureExt};
+use crate::stores::EventStore;
+
+use futures::future::Future;
 use petgraph::visit::Walker;
 use serde_json::Value;
 
@@ -6,7 +8,7 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Debug;
-use std::iter;
+
 use std::pin::Pin;
 
 use failure::Error;
@@ -94,46 +96,6 @@ impl RoomVersion for RoomVersion2 {
     type State = state::RoomStateResolverV2<
         auth_rules::AuthV1<events::v2::SignedEventV2>,
     >;
-}
-
-pub trait EventStore: Clone + 'static {
-    type Event: Event;
-    type RoomState: RoomState;
-    type RoomVersion: RoomVersion<Event = Self::Event>;
-
-    fn insert_events(
-        &self,
-        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
-
-    fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
-        &self,
-        event_ids: I,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>>;
-
-    fn get_events(
-        &self,
-        event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
-
-    fn get_event(
-        &self,
-        event_id: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::Event>, Error>>>> {
-        self.get_events(iter::once(event_id))
-            .map(|r| r.map(|v| v.into_iter().next()))
-            .boxed_local()
-    }
-
-    fn get_state_for<T: AsRef<str>>(
-        &self,
-        event_ids: &[T],
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>;
-
-    fn get_conflicted_auth_chain(
-        &self,
-        event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
 }
 
 pub trait FederationClient {

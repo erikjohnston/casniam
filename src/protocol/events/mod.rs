@@ -2,7 +2,8 @@ pub mod v2;
 
 use failure::Error;
 
-use crate::protocol::{EventStore, RoomVersion};
+use crate::protocol::RoomVersion;
+use crate::stores::EventStore;
 
 pub struct EventBuilder {
     event_type: String,

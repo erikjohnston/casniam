@@ -1,5 +1,6 @@
-use crate::protocol::{Event, EventStore, RoomStateResolver, RoomVersion};
+use crate::protocol::{Event, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
+use crate::stores::EventStore;
 
 use failure::Error;
 use futures::{future, Future, FutureExt};
