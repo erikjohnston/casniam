@@ -34,7 +34,7 @@ where
         e: &'a Self::Event,
         s: &'a impl RoomState,
         store: &'a impl EventStore<Event = E>,
-    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
         Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
 

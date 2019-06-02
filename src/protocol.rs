@@ -38,7 +38,7 @@ pub trait RoomStateResolver {
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
         store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-    ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
 }
 
 pub trait RoomState: Clone + Debug + 'static {
@@ -69,7 +69,7 @@ pub trait AuthRules {
         e: &Self::Event,
         s: &impl RoomState,
         store: &impl EventStore<Event = Self::Event>,
-    ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 
     fn auth_types_for_event(
         event_type: &str,
@@ -104,22 +104,22 @@ pub trait EventStore: Clone + 'static {
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<Future<Output = Result<(), Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 
     fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>>;
 
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
 
     fn get_event(
         &self,
         event_id: impl AsRef<str>,
-    ) -> Pin<Box<Future<Output = Result<Option<Self::Event>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::Event>, Error>>>> {
         self.get_events(iter::once(event_id))
             .map(|r| r.map(|v| v.into_iter().next()))
             .boxed_local()
@@ -128,12 +128,12 @@ pub trait EventStore: Clone + 'static {
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>;
 
     fn get_conflicted_auth_chain(
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
 }
 
 pub trait FederationClient {
@@ -142,11 +142,11 @@ pub trait FederationClient {
         forward: Vec<String>,
         back: Vec<String>,
         limit: usize,
-    ) -> Pin<Box<Future<Output = Result<Vec<E>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<E>, Error>>>>;
     fn get_state_at<S: RoomState>(
         &self,
         event_id: &str,
-    ) -> Pin<Box<Future<Output = Result<S, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
 }
 
 pub struct Handler<E: EventStore> {
@@ -536,7 +536,7 @@ mod tests {
         fn resolve_state<'a, S: RoomState>(
             _states: Vec<S>,
             _store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-        ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
+        ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>> {
             Box::pin(future::ok(S::new()))
         }
     }
@@ -550,7 +550,7 @@ mod tests {
             _e: &Self::Event,
             _s: &impl RoomState,
             _store: &impl EventStore<Event = Self::Event>,
-        ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+        ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
             Box::pin(future::ok(()))
         }
 
@@ -582,8 +582,8 @@ mod tests {
 
         fn insert_events(
             &self,
-            events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-        ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+            _events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
             unimplemented!()
         }
 
@@ -593,14 +593,14 @@ mod tests {
         >(
             &self,
             _event_ids: I,
-        ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
             unimplemented!()
         }
 
         fn get_events(
             &self,
             _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>
         {
             unimplemented!()
         }
@@ -608,7 +608,7 @@ mod tests {
         fn get_state_for<T: AsRef<str>>(
             &self,
             _event_ids: &[T],
-        ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>>
+        ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
         {
             unimplemented!()
         }
@@ -616,7 +616,7 @@ mod tests {
         fn get_conflicted_auth_chain(
             &self,
             _event_ids: Vec<Vec<impl AsRef<str>>>,
-        ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>>
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>
         {
             unimplemented!()
         }

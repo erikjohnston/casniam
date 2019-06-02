@@ -34,7 +34,7 @@ impl RoomStateResolver for DummyStateResolver {
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
         _store: &'a impl EventStore,
-    ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>> {
         let res = match states.len() {
             0 => RoomState::new(),
             1 => states[0].borrow().clone(),
@@ -149,7 +149,7 @@ impl EventStore for DummyStore {
     fn insert_events(
         &self,
         _events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
         unimplemented!()
     }
 
@@ -159,28 +159,29 @@ impl EventStore for DummyStore {
     >(
         &self,
         _event_ids: I,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
         unimplemented!()
     }
 
     fn get_events(
         &self,
         _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<V1Event>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<V1Event>, Error>>>> {
         unimplemented!()
     }
 
     fn get_state_for<T: AsRef<str>>(
         &self,
         _event_ids: &[T],
-    ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
+    {
         unimplemented!()
     }
 
     fn get_conflicted_auth_chain(
         &self,
         _event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
         unimplemented!()
     }
 }

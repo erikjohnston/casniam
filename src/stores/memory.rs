@@ -36,7 +36,7 @@ where
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<Future<Output = Result<(), Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
         let mut store = self.write().expect("Mutex poisoned");
 
         for (event, state) in events {
@@ -53,7 +53,7 @@ where
     >(
         &self,
         event_ids: I,
-    ) -> Pin<Box<Future<Output = Result<Vec<String>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
         let store = self.read().expect("Mutex poisoned");
 
         future::ok(
@@ -69,7 +69,7 @@ where
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
         let store = self.read().expect("Mutex poisoned");
 
         future::ok(
@@ -85,7 +85,8 @@ where
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> Pin<Box<Future<Output = Result<Option<Self::RoomState>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
+    {
         let mut states: Vec<Self::RoomState> =
             Vec::with_capacity(event_ids.len());
 
@@ -131,7 +132,7 @@ where
     fn get_conflicted_auth_chain(
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> Pin<Box<Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
         let store = self.read().expect("Mutex poisoned");
 
         let mut auth_chains: Vec<BTreeSet<String>> =

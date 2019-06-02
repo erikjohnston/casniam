@@ -26,7 +26,7 @@ where
     fn resolve_state<S: RoomState>(
         states: Vec<S>,
         store: &impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-    ) -> Pin<Box<Future<Output = Result<S, Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>> {
         let store = store.clone();
         async move {
             let (
@@ -67,7 +67,10 @@ where
             )
             .await?;
 
-            println!("conflicted_standard_events: {:#?}", conflicted_standard_events);
+            println!(
+                "conflicted_standard_events: {:#?}",
+                conflicted_standard_events
+            );
 
             let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_standard_events,
@@ -485,10 +488,10 @@ async fn get_mainline_depth_for_event<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::auth_rules::AuthV1;
-    use crate::protocol::events::{v2, EventBuilder};
+
+    use crate::protocol::events::EventBuilder;
     use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion2};
-    use crate::state_map::StateMap;
+
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
     use futures::executor::block_on;
@@ -1162,7 +1165,7 @@ mod tests {
             vec![pa.clone()],
         );
 
-       let mb = create_event(
+        let mb = create_event(
             &store,
             "m.room.member",
             Some(bob),
