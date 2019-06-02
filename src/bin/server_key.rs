@@ -89,7 +89,7 @@ impl Event for V1Event {
     }
 
     fn redacts(&self) -> Option<&str> {
-        unimplemented!() // FIXME
+        unimplemented!()
     }
 
     fn room_id(&self) -> &str {

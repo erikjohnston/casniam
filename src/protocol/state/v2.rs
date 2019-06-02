@@ -181,7 +181,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
 
     // We need to move all conflicted_standard_events that are in the power
     // events auth chain into conflicted_power_events
-    // FIXME: So much cloning...
+    // TODO: So much cloning...
     let mut stack: Vec<_> = conflicted_power_events.iter().cloned().collect();
     while let Some(ev) = stack.pop() {
         if let Some(ee) = conflicted_standard_events.remove(ev.event_id()) {

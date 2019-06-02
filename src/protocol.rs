@@ -210,12 +210,14 @@ impl<ES: EventStore> Handler<ES> {
             .is_err();
 
             let mut state_after = state_before.clone();
-            if let Some(state_key) = event.state_key() {
-                state_after.add_event(
-                    event.event_type().to_string(),
-                    state_key.to_string(),
-                    event.event_id().to_string(),
-                );
+            if !rejected {
+                if let Some(state_key) = event.state_key() {
+                    state_after.add_event(
+                        event.event_type().to_string(),
+                        state_key.to_string(),
+                        event.event_id().to_string(),
+                    );
+                }
             }
 
             persisted_state.push(PersistEventInfo {
