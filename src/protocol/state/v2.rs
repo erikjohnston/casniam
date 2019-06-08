@@ -489,7 +489,7 @@ mod tests {
     use super::*;
 
     use crate::protocol::events::EventBuilder;
-    use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion2};
+    use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion3};
 
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
@@ -498,7 +498,7 @@ mod tests {
     use std::iter::once;
 
     fn create_event(
-        store: &MemoryEventStore<RoomVersion2>,
+        store: &MemoryEventStore<RoomVersion3>,
         event_type: &str,
         state_key: Option<&str>,
         sender: &str,
@@ -519,7 +519,7 @@ mod tests {
         builder.with_prev_events(prev_events);
 
         let event =
-            block_on(builder.build_v2::<RoomVersion2, _>(store)).unwrap();
+            block_on(builder.build_v2::<RoomVersion3, _>(store)).unwrap();
 
         if let Some(s) = state_key {
             state.insert(event_type, s, event.event_id().to_string());
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_get_conflicted_events() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let create = create_event(
             &store,
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn resolve_single() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let create = create_event(
             &store,
@@ -568,7 +568,7 @@ mod tests {
         let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
 
         let resolved =
-            block_on(<RoomVersion2 as RoomVersion>::State::resolve_state(
+            block_on(<RoomVersion3 as RoomVersion>::State::resolve_state(
                 vec![state],
                 &store,
             ))
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn join_rule_evasion() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn ban_vs_pl() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn offtopic_pl() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn topic_basic() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -1072,7 +1072,7 @@ mod tests {
 
     #[test]
     fn topic_reset() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn topic() {
-        let store: MemoryEventStore<RoomVersion2> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";

@@ -18,7 +18,7 @@ pub mod events;
 pub mod json;
 pub mod server_keys;
 pub mod state;
-pub mod v1;
+// pub mod v1;
 
 pub trait Event: Clone + fmt::Debug {
     fn auth_event_ids(&self) -> Vec<&str>;
@@ -88,15 +88,27 @@ pub trait RoomVersion {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct RoomVersion2;
+pub struct RoomVersion3;
 
-impl RoomVersion for RoomVersion2 {
+impl RoomVersion for RoomVersion3 {
     type Event = events::v2::SignedEventV2;
     type Auth = auth_rules::AuthV1<events::v2::SignedEventV2>;
     type State = state::RoomStateResolverV2<
         auth_rules::AuthV1<events::v2::SignedEventV2>,
     >;
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RoomVersion4;
+
+impl RoomVersion for RoomVersion4 {
+    type Event = events::v3::SignedEventV3;
+    type Auth = auth_rules::AuthV1<events::v3::SignedEventV3>;
+    type State = state::RoomStateResolverV2<
+        auth_rules::AuthV1<events::v3::SignedEventV3>,
+    >;
+}
+
 
 pub trait FederationClient {
     fn get_missing_events<E: Event>(
@@ -143,11 +155,12 @@ impl<ES: EventStore> Handler<ES> {
             }
         }
 
-        let mut event_to_state: HashMap<String, ES::RoomState> = HashMap::new();
+        let mut event_to_state_after: HashMap<String, ES::RoomState> =
+            HashMap::new();
 
         for event_id in &missing {
             let state = await!(self.event_store.get_state_for(&[event_id]))?;
-            event_to_state.insert(event_id.to_string(), state.unwrap());
+            event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
 
         let mut persisted_state = Vec::new();
@@ -157,7 +170,7 @@ impl<ES: EventStore> Handler<ES> {
             let states = event
                 .prev_event_ids()
                 .iter()
-                .map(|e| event_to_state[e as &str].clone())
+                .map(|e| event_to_state_after[e as &str].clone())
                 .collect();
 
             let state_before: ES::RoomState =
@@ -188,7 +201,7 @@ impl<ES: EventStore> Handler<ES> {
                 state_before,
             });
 
-            event_to_state.insert(event_id, state_after);
+            event_to_state_after.insert(event_id, state_after);
         }
 
         Ok(persisted_state)

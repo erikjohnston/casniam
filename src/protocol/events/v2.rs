@@ -27,7 +27,7 @@ pub struct EventV2 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedEventV2 {
-    #[serde(skip)]
+    #[serde(skip)]  // FIXME
     event_id: String,
     #[serde(flatten)]
     signed: Signed<EventV2>,
@@ -326,6 +326,7 @@ pub enum EventHash {
 mod tests {
     use super::*;
     use crate::protocol::json::serialize_canonically_remove_fields;
+
     use base64;
     use sha2::{Digest, Sha256};
 
@@ -348,6 +349,8 @@ mod tests {
         }"#;
 
         let event: SignedEventV2 = serde_json::from_str(json).unwrap();
+
+        // assert_eq!(event.event_id(), "$pai2VGOj4GF2Cq+/WhT7C9SKDjW445YWZ7F8NuxAiFI");
 
         let hash = match event.as_ref().hashes() {
             EventHash::Sha256(s) => {
