@@ -1,16 +1,16 @@
 use crate::json::signed::Signed;
 
 use crate::protocol::json::serialize_canonically_remove_fields;
-use crate::protocol::{Event};
+use crate::protocol::Event;
 
 use base64;
+use serde::de::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 
-use super::v2::{EventV2, redact};
+use super::v2::{redact, EventV2};
 
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedEventV3{
+#[derive(Debug, Clone, Serialize)]
+pub struct SignedEventV3 {
     #[serde(skip)]
     event_id: String,
     #[serde(flatten)]
@@ -24,17 +24,21 @@ impl AsRef<EventV2> for SignedEventV3 {
 }
 
 impl SignedEventV3 {
-    fn from_signed(event: Signed<EventV2>) -> SignedEventV3 {
-        let redacted: EventV2 =
-            redact(&event).expect("EventV2 should always serialize.");
+    pub fn from_signed(event: Signed<EventV2>) -> SignedEventV3 {
+        let redacted: serde_json::Value =
+            redact(&event).expect("EventV3 should always serialize.");
 
-        let serialized =
-            serialize_canonically_remove_fields(redacted.clone(), &[])
-                .expect("EventV2 should always serialize.");
+        let serialized = serialize_canonically_remove_fields(
+            redacted,
+            &["signatures", "unsigned"],
+        )
+        .expect("EventV3 should always serialize.");
         let computed_hash = Sha256::digest(&serialized);
 
-        let event_id =
-            base64::encode_config(&computed_hash, base64::URL_SAFE_NO_PAD);
+        let event_id = format!(
+            "${}",
+            base64::encode_config(&computed_hash, base64::URL_SAFE_NO_PAD)
+        );
 
         SignedEventV3 {
             event_id,
@@ -42,7 +46,7 @@ impl SignedEventV3 {
         }
     }
 
-    fn signed(&self) -> &Signed<EventV2> {
+    pub fn signed(&self) -> &Signed<EventV2> {
         &self.signed
     }
 }
@@ -103,6 +107,16 @@ impl Event for SignedEventV3 {
     }
 }
 
+impl<'de> Deserialize<'de> for SignedEventV3 {
+    fn deserialize<D>(deserializer: D) -> Result<SignedEventV3, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let signed = Signed::<EventV2>::deserialize(deserializer)?;
+
+        Ok(SignedEventV3::from_signed(signed))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -115,22 +129,44 @@ mod tests {
     #[test]
     fn test_deserialize() {
         let json = r#"{
-            "auth_events": ["$VwZY3if3+/rKgEzJMyjVaDeQFs0xLzph6sGjHEzLn2E", "$VnU0XEK6VPvVIF2dYia3VEM4geCQ/crydE3oMUbkgzg", "$Rk6ptuAGr5qZt7qmRbHdn8OFjwWAcXqL9rUwH576pYE"],
-            "content": {"body": "ok :)", "msgtype": "m.text"},
-            "depth": 6555,
-            "hashes": {"sha256": "of2ROvFl+BuX8KeRJV759pLPGQRdrL85a5NWnuRBBos"},
-            "origin": "matrix.org",
-            "origin_server_ts": 1554477158528,
-            "prev_events": ["$YVjEKxL4rRhjLnTV4rXn8x+Df582SxEWzDwLsbZ8Za4"],
+            "auth_events": [
+                "$nGmCFF6OvZhFWE18KW_FuEt5vc6LZZU3qtBedUPsdNU",
+                "$RrGxF28UrHLmoASHndYb9Jb_1SFww2ptmtur9INS438",
+                "$G56kaH7C6YswzrBt8jmNkukyn8k2gLiL1MvBUPuTRoU"
+            ],
+            "content": {
+                "body": "Morning",
+                "msgtype": "m.text"
+            },
+            "depth": 1977,
+            "hashes": {
+                "sha256": "dkIeXmX5z53VDYO7fKzXBs/rJxxmC57fNZ7RI/z6TIk"
+            },
+            "origin": "half-shot.uk",
+            "origin_server_ts": 1560506336305,
+            "prev_events": [
+                "$SerKMzCN6PF7irH6u-xjyBcYer28yKQsfDAuErEB6lI"
+            ],
             "prev_state": [],
-            "room_id": "!zVpPeWAObqutioiNzB:jki.re",
-            "sender": "@dave:matrix.org",
+            "room_id": "!uXDCzlYgCTHtiWCkEx:jki.re",
+            "sender": "@Half-Shot:half-shot.uk",
             "type": "m.room.message",
-            "signatures": {"matrix.org": {"ed25519:auto": "9wuGBfX5D1E8RZtO1OX5mqcqWZ9yJEUwlhyHyCZyGBc+ONiW/NwqrQAPVNcGfgjbbTYZZhgz6/gyUe4VdOGHCg"}},
-            "unsigned": {"age_ts": 1554477158528}
+            "signatures": {
+                "half-shot.uk": {
+                "ed25519:a_fBAF": "Ji64ZnlmzZvFh2avbXjslgztVpJq2R99GJcvAiIgS9e5js72Kb6MT9jG8ICwAJS0uvfe63y9EiT4ZISCexS4Dw"
+                }
+            },
+            "unsigned": {
+                "age_ts": 1560506336305
+            }
         }"#;
 
         let event: SignedEventV3 = serde_json::from_str(json).unwrap();
+
+        assert_eq!(
+            event.event_id(),
+            "$fiBKn85VUTUExDLt429XdiNizXtZl_2rjpfka1p3wQw"
+        );
 
         let hash = match event.as_ref().hashes() {
             EventHash::Sha256(s) => {
@@ -150,34 +186,63 @@ mod tests {
     #[test]
     fn test_redact() {
         let full_json = r#"{
-            "auth_events": ["$VwZY3if3+/rKgEzJMyjVaDeQFs0xLzph6sGjHEzLn2E", "$VnU0XEK6VPvVIF2dYia3VEM4geCQ/crydE3oMUbkgzg", "$Rk6ptuAGr5qZt7qmRbHdn8OFjwWAcXqL9rUwH576pYE"],
-            "content": {"body": "ok :)", "msgtype": "m.text"},
-            "depth": 6555,
-            "hashes": {"sha256": "of2ROvFl+BuX8KeRJV759pLPGQRdrL85a5NWnuRBBos"},
-            "origin": "matrix.org",
-            "origin_server_ts": 1554477158528,
-            "prev_events": ["$YVjEKxL4rRhjLnTV4rXn8x+Df582SxEWzDwLsbZ8Za4"],
+            "auth_events": [
+                "$nGmCFF6OvZhFWE18KW_FuEt5vc6LZZU3qtBedUPsdNU",
+                "$RrGxF28UrHLmoASHndYb9Jb_1SFww2ptmtur9INS438",
+                "$G56kaH7C6YswzrBt8jmNkukyn8k2gLiL1MvBUPuTRoU"
+            ],
+            "content": {
+                "body": "Morning",
+                "msgtype": "m.text"
+            },
+            "depth": 1977,
+            "hashes": {
+                "sha256": "dkIeXmX5z53VDYO7fKzXBs/rJxxmC57fNZ7RI/z6TIk"
+            },
+            "origin": "half-shot.uk",
+            "origin_server_ts": 1560506336305,
+            "prev_events": [
+                "$SerKMzCN6PF7irH6u-xjyBcYer28yKQsfDAuErEB6lI"
+            ],
             "prev_state": [],
-            "room_id": "!zVpPeWAObqutioiNzB:jki.re",
-            "sender": "@dave:matrix.org",
+            "room_id": "!uXDCzlYgCTHtiWCkEx:jki.re",
+            "sender": "@Half-Shot:half-shot.uk",
             "type": "m.room.message",
-            "signatures": {"matrix.org": {"ed25519:auto": "9wuGBfX5D1E8RZtO1OX5mqcqWZ9yJEUwlhyHyCZyGBc+ONiW/NwqrQAPVNcGfgjbbTYZZhgz6/gyUe4VdOGHCg"}},
-            "unsigned": {"age_ts": 1554477158528}
+            "signatures": {
+                "half-shot.uk": {
+                "ed25519:a_fBAF": "Ji64ZnlmzZvFh2avbXjslgztVpJq2R99GJcvAiIgS9e5js72Kb6MT9jG8ICwAJS0uvfe63y9EiT4ZISCexS4Dw"
+                }
+            },
+            "unsigned": {
+                "age_ts": 1560506336305
+            }
         }"#;
 
         let redacted_json = r#"{
-            "auth_events": ["$VwZY3if3+/rKgEzJMyjVaDeQFs0xLzph6sGjHEzLn2E", "$VnU0XEK6VPvVIF2dYia3VEM4geCQ/crydE3oMUbkgzg", "$Rk6ptuAGr5qZt7qmRbHdn8OFjwWAcXqL9rUwH576pYE"],
+            "auth_events": [
+                "$nGmCFF6OvZhFWE18KW_FuEt5vc6LZZU3qtBedUPsdNU",
+                "$RrGxF28UrHLmoASHndYb9Jb_1SFww2ptmtur9INS438",
+                "$G56kaH7C6YswzrBt8jmNkukyn8k2gLiL1MvBUPuTRoU"
+            ],
             "content": {},
-            "depth": 6555,
-            "hashes": {"sha256": "of2ROvFl+BuX8KeRJV759pLPGQRdrL85a5NWnuRBBos"},
-            "origin": "matrix.org",
-            "origin_server_ts": 1554477158528,
-            "prev_events": ["$YVjEKxL4rRhjLnTV4rXn8x+Df582SxEWzDwLsbZ8Za4"],
+            "depth": 1977,
+            "hashes": {
+                "sha256": "dkIeXmX5z53VDYO7fKzXBs/rJxxmC57fNZ7RI/z6TIk"
+            },
+            "origin": "half-shot.uk",
+            "origin_server_ts": 1560506336305,
+            "prev_events": [
+                "$SerKMzCN6PF7irH6u-xjyBcYer28yKQsfDAuErEB6lI"
+            ],
             "prev_state": [],
-            "room_id": "!zVpPeWAObqutioiNzB:jki.re",
-            "sender": "@dave:matrix.org",
+            "room_id": "!uXDCzlYgCTHtiWCkEx:jki.re",
+            "sender": "@Half-Shot:half-shot.uk",
             "type": "m.room.message",
-            "signatures": {"matrix.org": {"ed25519:auto": "9wuGBfX5D1E8RZtO1OX5mqcqWZ9yJEUwlhyHyCZyGBc+ONiW/NwqrQAPVNcGfgjbbTYZZhgz6/gyUe4VdOGHCg"}}
+            "signatures": {
+                "half-shot.uk": {
+                "ed25519:a_fBAF": "Ji64ZnlmzZvFh2avbXjslgztVpJq2R99GJcvAiIgS9e5js72Kb6MT9jG8ICwAJS0uvfe63y9EiT4ZISCexS4Dw"
+                }
+            }
         }"#;
 
         let event: SignedEventV3 = serde_json::from_str(full_json).unwrap();

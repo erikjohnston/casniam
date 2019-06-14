@@ -6,6 +6,7 @@ use crate::stores::EventStore;
 
 use base64;
 use failure::Error;
+use serde::de::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 use std::cmp::max;
 
@@ -22,12 +23,13 @@ pub struct EventV2 {
     sender: String,
     #[serde(rename = "type")]
     event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     state_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SignedEventV2 {
-    #[serde(skip)]  // FIXME
+    #[serde(skip)]
     event_id: String,
     #[serde(flatten)]
     signed: Signed<EventV2>,
@@ -40,17 +42,21 @@ impl AsRef<EventV2> for SignedEventV2 {
 }
 
 impl SignedEventV2 {
-    fn from_signed(event: Signed<EventV2>) -> SignedEventV2 {
-        let redacted: EventV2 =
+    pub fn from_signed(event: Signed<EventV2>) -> SignedEventV2 {
+        let redacted: serde_json::Value =
             redact(&event).expect("EventV2 should always serialize.");
 
-        let serialized =
-            serialize_canonically_remove_fields(redacted.clone(), &[])
-                .expect("EventV2 should always serialize.");
+        let serialized = serialize_canonically_remove_fields(
+            redacted,
+            &["signatures", "unsigned"],
+        )
+        .expect("EventV2 should always serialize.");
         let computed_hash = Sha256::digest(&serialized);
 
-        let event_id =
-            base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD);
+        let event_id = format!(
+            "${}",
+            base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD)
+        );
 
         SignedEventV2 {
             event_id,
@@ -58,7 +64,7 @@ impl SignedEventV2 {
         }
     }
 
-    fn signed(&self) -> &Signed<EventV2> {
+    pub fn signed(&self) -> &Signed<EventV2> {
         &self.signed
     }
 }
@@ -239,7 +245,16 @@ impl Event for SignedEventV2 {
     }
 }
 
-impl SignedEventV2 {}
+impl<'de> Deserialize<'de> for SignedEventV2 {
+    fn deserialize<D>(deserializer: D) -> Result<SignedEventV2, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let signed = Signed::<EventV2>::deserialize(deserializer)?;
+
+        Ok(SignedEventV2::from_signed(signed))
+    }
+}
 
 pub fn redact<E: serde::de::DeserializeOwned>(
     event: &Signed<EventV2>,
@@ -350,7 +365,10 @@ mod tests {
 
         let event: SignedEventV2 = serde_json::from_str(json).unwrap();
 
-        // assert_eq!(event.event_id(), "$pai2VGOj4GF2Cq+/WhT7C9SKDjW445YWZ7F8NuxAiFI");
+        assert_eq!(
+            event.event_id(),
+            "$pai2VGOj4GF2Cq+/WhT7C9SKDjW445YWZ7F8NuxAiFI"
+        );
 
         let hash = match event.as_ref().hashes() {
             EventHash::Sha256(s) => {

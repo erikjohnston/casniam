@@ -109,7 +109,6 @@ impl RoomVersion for RoomVersion4 {
     >;
 }
 
-
 pub trait FederationClient {
     fn get_missing_events<E: Event>(
         &self,

@@ -212,6 +212,11 @@ mod tests {
         a: i64,
     }
 
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct B {
+        b: Option<i64>,
+    }
+
     #[test]
     fn signed_deserialize() {
         let s: Signed<A> = serde_json::from_str(
@@ -231,6 +236,21 @@ mod tests {
         let j = serde_json::to_string(&s).unwrap();
 
         assert_eq!(j, r#"{"a":1,"signatures":{}}"#);
+    }
+
+    #[test]
+    fn signed_roundtrip() {
+        let s: Signed<B> = serde_json::from_str(
+            r#"{ "a": 1, "signatures": {}, "unsigned": {} }"#,
+        )
+        .unwrap();
+
+        assert_eq!(s.value.as_ref(), &B { b: None });
+        assert_eq!(s.signatures.len(), 0);
+        assert_eq!(s.value.get_canonical(), r#"{"a":1}"#);
+
+        let j = serde_json::to_string(&s).unwrap();
+        assert_eq!(j, r#"{"a":1,"signatures":{},"unsigned":{}}"#);
     }
 
     #[test]
