@@ -27,7 +27,17 @@ fn render_server_keys() -> HttpResponse {
 
 fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
-        App::new().service(web::resource("/").to(render_server_keys))
+        App::new()
+            .service(
+                web::resource("/_matrix/key/v2/server").to(render_server_keys),
+            )
+            .service(
+                web::resource("/_matrix/key/v2/server/").to(render_server_keys),
+            )
+            .service(
+                web::resource("/_matrix/key/v2/server/{key_id}")
+                    .to(render_server_keys),
+            )
     })
     .bind("127.0.0.1:8088")?
     .run()
