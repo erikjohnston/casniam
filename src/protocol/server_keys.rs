@@ -1,19 +1,21 @@
 use std::collections::BTreeMap;
 
+use actix_web::HttpResponse;
 use chrono::{Duration, Utc};
+use serde::Serialize;
 use sodiumoxide::crypto::sign;
 
 use crate::json::signed::Signed;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ServerKeys {
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ServerKeysResponse {
     server_name: String,
     valid_until_ts: u64,
     verify_keys: BTreeMap<String, VerifyKey>,
     old_verify_keys: BTreeMap<String, VerifyKey>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VerifyKey {
     key: String,
 }
@@ -22,11 +24,11 @@ pub fn make_server_keys(
     server_name: String,
     verify_keys: BTreeMap<String, (sign::PublicKey, sign::SecretKey)>,
     old_verify_keys: BTreeMap<String, VerifyKey>,
-) -> Signed<ServerKeys> {
+) -> Signed<ServerKeysResponse> {
     let valid_until_ts =
         (Utc::now() + Duration::days(1)).timestamp_millis() as u64;
 
-    let server_keys = ServerKeys {
+    let server_keys = ServerKeysResponse {
         server_name: server_name.clone(),
         valid_until_ts,
         verify_keys: verify_keys
@@ -54,4 +56,37 @@ pub fn make_server_keys(
     }
 
     s
+}
+
+#[derive(Debug, Clone)]
+pub struct KeyServerServlet {
+    server_name: String,
+    verify_keys: BTreeMap<String, (sign::PublicKey, sign::SecretKey)>,
+    old_verify_keys: BTreeMap<String, VerifyKey>,
+}
+
+impl KeyServerServlet {
+    pub fn new(
+        server_name: String,
+        verify_keys: BTreeMap<String, (sign::PublicKey, sign::SecretKey)>,
+        old_verify_keys: BTreeMap<String, VerifyKey>,
+    ) -> KeyServerServlet {
+        KeyServerServlet {
+            server_name,
+            verify_keys,
+            old_verify_keys,
+        }
+    }
+
+    pub fn make_body(&self) -> impl Serialize {
+        make_server_keys(
+            self.server_name.clone(),
+            self.verify_keys.clone(),
+            self.old_verify_keys.clone(),
+        )
+    }
+
+    pub fn render(&self) -> HttpResponse {
+        HttpResponse::Ok().json(self.make_body())
+    }
 }
