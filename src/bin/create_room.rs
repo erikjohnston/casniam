@@ -13,8 +13,17 @@ use sodiumoxide::crypto::sign;
 
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
-use casniam::protocol::{RoomVersion, RoomVersion4};
+use casniam::protocol::{Event, RoomVersion, RoomVersion4};
 use casniam::stores::memory;
+
+fn to_value(
+    value: serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    match value {
+        serde_json::Value::Object(value) => value,
+        _ => panic!("Expected json map"),
+    }
+}
 
 async fn generate_room<R>(
     server_name: String,
@@ -35,26 +44,32 @@ where
 
     let creator = format!("@alice:{}", server_name);
 
-    let mut builder = EventBuilder::new(
-        room_id,
+    let create = EventBuilder::new(
+        room_id.clone(),
         creator.clone(),
         "m.room.create".to_string(),
         Some("".to_string()),
-    );
+    )
+    .with_content(to_value(json!({
+        "creator": creator,
+    })))
+    .build::<R, _>(&database)
+    .await?;
 
-    builder.with_content(
-        if let serde_json::Value::Object(a) = json!({
-            "creator": creator,
-        }) {
-            a
-        } else {
-            unreachable!()
-        },
-    );
+    let member = EventBuilder::new(
+        room_id,
+        creator.clone(),
+        "m.room.member".to_string(),
+        Some(creator.clone()),
+    )
+    .with_prev_events(vec![create.event_id().to_string()])
+    .with_content(to_value(json!({
+        "membership": "join",
+    })))
+    .build::<R, _>(&database)
+    .await?;
 
-    let create_event = builder.build::<R, _>(&database).await?;
-
-    Ok(HttpResponse::Ok().json(json!({ "events": vec![create_event] })))
+    Ok(HttpResponse::Ok().json(json!({ "events": vec![create, member] })))
 }
 
 fn main() -> std::io::Result<()> {

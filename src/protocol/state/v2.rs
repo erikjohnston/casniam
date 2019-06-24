@@ -495,14 +495,14 @@ mod tests {
             EventBuilder::new("fake_room_id", sender, event_type, state_key);
 
         if let Some(m) = content {
-            builder.with_content(m.as_object().unwrap().clone());
+            builder = builder.with_content(m.as_object().unwrap().clone());
         }
 
         let mut state = block_on(store.get_state_for(&prev_events))
             .unwrap()
             .unwrap();
 
-        builder.with_prev_events(prev_events);
+        builder = builder.with_prev_events(prev_events);
 
         let event = block_on(builder.build::<RoomVersion3, _>(store)).unwrap();
 

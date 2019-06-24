@@ -21,8 +21,8 @@ fn test_create_room() {
         panic!();
     };
 
-    builder.with_content(content);
-    builder.origin("example.com");
+    builder = builder.with_content(content);
+    builder = builder.origin("example.com");
 
     // TODO: Actually create the event.
 }

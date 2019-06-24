@@ -37,24 +37,24 @@ impl EventBuilder {
     }
 
     pub fn with_content(
-        &mut self,
+        mut self,
         content: serde_json::Map<String, serde_json::Value>,
-    ) -> &mut Self {
+    ) -> Self {
         self.content = content;
         self
     }
 
-    pub fn origin(&mut self, origin: impl ToString) -> &mut Self {
+    pub fn origin(mut self, origin: impl ToString) -> Self {
         self.origin = origin.to_string();
         self
     }
 
-    pub fn origin_server_ts(&mut self, origin_server_ts: u64) -> &mut Self {
+    pub fn origin_server_ts(mut self, origin_server_ts: u64) -> Self {
         self.origin_server_ts = origin_server_ts;
         self
     }
 
-    pub fn with_prev_events(&mut self, prev_events: Vec<String>) -> &mut Self {
+    pub fn with_prev_events(mut self, prev_events: Vec<String>) -> Self {
         self.prev_events = prev_events;
         self
     }
