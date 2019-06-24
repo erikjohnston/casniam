@@ -32,6 +32,11 @@ pub trait Event: Clone + fmt::Debug {
     fn room_id(&self) -> &str;
     fn sender(&self) -> &str;
     fn state_key(&self) -> Option<&str>;
+
+    fn from_builder<R: RoomVersion<Event = Self>, E: EventStore<Event = Self>>(
+        builder: events::EventBuilder,
+        event_store: &E,
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
 }
 
 pub trait RoomStateResolver {
@@ -81,7 +86,7 @@ pub trait AuthRules {
     ) -> Vec<(String, String)>;
 }
 
-pub trait RoomVersion {
+pub trait RoomVersion: 'static {
     type Event: Event;
     type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
@@ -403,6 +408,16 @@ mod tests {
         }
 
         fn origin_server_ts(&self) -> u64 {
+            unimplemented!()
+        }
+
+        fn from_builder<
+            R: RoomVersion<Event = Self>,
+            E: EventStore<Event = Self>,
+        >(
+            _builder: events::EventBuilder,
+            _event_store: &E,
+        ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
             unimplemented!()
         }
     }

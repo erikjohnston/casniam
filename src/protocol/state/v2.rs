@@ -518,8 +518,7 @@ mod tests {
 
         builder.with_prev_events(prev_events);
 
-        let event =
-            block_on(builder.build_v2::<RoomVersion3, _>(store)).unwrap();
+        let event = block_on(builder.build::<RoomVersion3, _>(store)).unwrap();
 
         if let Some(s) = state_key {
             state.insert(event_type, s, event.event_id().to_string());

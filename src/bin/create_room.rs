@@ -45,7 +45,7 @@ async fn generate_room<R: RoomVersion>(
         },
     );
 
-    builder.build_v2(database).await;
+    builder.build::<R, _>(database).await;
 }
 
 fn main() -> std::io::Result<()> {

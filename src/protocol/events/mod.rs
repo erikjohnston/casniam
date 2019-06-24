@@ -3,7 +3,7 @@ pub mod v3;
 
 use failure::Error;
 
-use crate::protocol::RoomVersion;
+use crate::protocol::{Event, RoomVersion};
 use crate::stores::EventStore;
 
 pub struct EventBuilder {
@@ -59,14 +59,11 @@ impl EventBuilder {
         self
     }
 
-    pub async fn build_v2<
-        R: RoomVersion<Event = v2::SignedEventV2>,
-        E: EventStore<Event = v2::SignedEventV2>,
-    >(
+    pub async fn build<R: RoomVersion, E: EventStore<Event = R::Event>>(
         self,
         event_store: &E,
-    ) -> Result<v2::SignedEventV2, Error> {
-        let res = await!(v2::EventV2::from_builder::<R, E>(self, event_store))?;
-        Ok(res)
+    ) -> Result<R::Event, Error> {
+        let event = await!(R::Event::from_builder::<R, E>(self, event_store))?;
+        Ok(event)
     }
 }

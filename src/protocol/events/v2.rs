@@ -6,9 +6,12 @@ use crate::stores::EventStore;
 
 use base64;
 use failure::Error;
+use futures::{Future, FutureExt};
 use serde::de::{Deserialize, Deserializer};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::cmp::max;
+use std::pin::Pin;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EventV2 {
@@ -42,6 +45,42 @@ impl AsRef<EventV2> for SignedEventV2 {
 }
 
 impl SignedEventV2 {
+    pub async fn from_builder<
+        R: RoomVersion<Event = Self>,
+        E: EventStore<Event = Self>,
+    >(
+        builder: super::EventBuilder,
+        event_store: E,
+    ) -> Result<Self, Error> {
+        let auth_types = R::Auth::auth_types_for_event(
+            &builder.event_type,
+            builder.state_key.as_ref().map(|e| e as &str),
+            &builder.sender,
+            &builder.content,
+        );
+
+        // TODO: Only pull out a subset of the state needed.
+        let state = await!(event_store.get_state_for(&builder.prev_events))?
+            .ok_or_else(|| {
+                format_err!(
+                    "No state for prev events: {:?}",
+                    &builder.prev_events
+                )
+            })?;
+
+        let auth_events = state.get_event_ids(auth_types);
+
+        let mut depth = 0;
+        let evs = await!(event_store.get_events(&builder.prev_events))?;
+        for ev in evs {
+            depth = max(ev.depth(), depth);
+        }
+
+        let event = EventV2::from_builder(builder, auth_events, depth)?;
+        let signed = Signed::wrap(event)?;
+        Ok(Self::from_signed(signed))
+    }
+
     pub fn from_signed(event: Signed<EventV2>) -> SignedEventV2 {
         let redacted: serde_json::Value =
             redact(&event).expect("EventV2 should always serialize.");
@@ -70,13 +109,11 @@ impl SignedEventV2 {
 }
 
 impl EventV2 {
-    pub async fn from_builder<
-        R: RoomVersion<Event = SignedEventV2>,
-        E: EventStore<Event = SignedEventV2>,
-    >(
+    pub fn from_builder(
         builder: super::EventBuilder,
-        event_store: &E,
-    ) -> Result<SignedEventV2, Error> {
+        auth_events: Vec<String>,
+        depth: i64,
+    ) -> Result<EventV2, Error> {
         let super::EventBuilder {
             event_type,
             state_key,
@@ -88,60 +125,40 @@ impl EventV2 {
             prev_events,
         } = builder;
 
-        let mut event = EventV2 {
-            content,
-            origin,
-            origin_server_ts,
-            room_id,
-            sender,
-            event_type,
-            state_key,
+        // TODO: This is probably a bit of an unncessary construction, but saves
+        // us from having a half-initialised EventV2 object (due to not having
+        // computed the hashes).
+        let mut event_json = json!({
+            "auth_events": auth_events,
+            "content": content,
+            "depth": depth,
+            "origin": origin,
+            "origin_server_ts": origin_server_ts,
+            "prev_events": prev_events,
+            "room_id": room_id,
+            "sender": sender,
+            "type": event_type,
+        });
 
-            // We set the following attributes later
-            auth_events: Vec::new(),
-            depth: 0,
-            hashes: EventHash::Sha256("".to_string()),
-            prev_events: Vec::new(),
-        };
-
-        let auth_types = R::Auth::auth_types_for_event(
-            event.event_type(),
-            event.state_key(),
-            event.sender(),
-            event.content(),
-        );
-
-        // TODO: Only pull out a subset of the state needed.
-        let state = await!(event_store.get_state_for(&prev_events))?
-            .ok_or_else(|| {
-                format_err!("No state for prev events: {:?}", &prev_events)
-            })?;
-
-        let auth_events = state.get_event_ids(auth_types);
-
-        let mut depth = 0;
-        let evs = await!(event_store.get_events(&prev_events))?;
-        for ev in evs {
-            depth = max(ev.depth(), depth);
+        if let Some(s) = state_key {
+            event_json["state_key"] = s.into();
         }
 
-        event.depth = depth;
-        event.auth_events = auth_events;
-        event.prev_events = prev_events;
-
-        let serialized =
-            serialize_canonically_remove_fields(event.clone(), &["hashes"])?;
+        let serialized = serialize_canonically_remove_fields(
+            event_json.clone(),
+            &["hashes"],
+        )?;
 
         let computed_hash = Sha256::digest(&serialized);
 
-        event.hashes = EventHash::Sha256(base64::encode_config(
-            &computed_hash,
-            base64::STANDARD_NO_PAD,
-        ));
+        event_json["hashes"] = json!({
+            "sha256":
+                base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD)
+        });
 
-        let signed = Signed::wrap(event)?;
+        let event = serde_json::from_value(event_json)?;
 
-        Ok(SignedEventV2::from_signed(signed))
+        Ok(event)
     }
 
     pub fn auth_events(&self) -> &[String] {
@@ -242,6 +259,17 @@ impl Event for SignedEventV2 {
 
     fn state_key(&self) -> Option<&str> {
         self.signed.as_ref().state_key()
+    }
+
+    fn from_builder<
+        R: RoomVersion<Event = Self>,
+        E: EventStore<Event = Self>,
+    >(
+        builder: super::EventBuilder,
+        event_store: &E,
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
+        let event_store = event_store.clone();
+        Self::from_builder::<R, E>(builder, event_store).boxed_local()
     }
 }
 
