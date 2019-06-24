@@ -31,8 +31,6 @@ where
         }
     }
 
-    println!("{:#?}", val);
-
     let uncompact = serde_json::to_vec(&val)?;
     let mut canonical = Vec::with_capacity(uncompact.len());
     indolentjson::compact::compact(&uncompact, &mut canonical)

@@ -35,9 +35,6 @@ where
                 conflicted_auth_chain,
             ) = get_conflicted_set(&store, &states).await?;
 
-            println!("unconflicted: {:#?}", unconflicted);
-            println!("conflicted_auth_chain: {:#?}", conflicted_auth_chain);
-
             sort_by_reverse_topological_power_ordering(
                 &mut conflicted_power_events,
                 &conflicted_auth_chain,
@@ -45,16 +42,12 @@ where
             )
             .await?;
 
-            println!("conflicted_power_events: {:#?}", conflicted_power_events);
-
             let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_power_events,
                 &unconflicted,
                 &store,
             )
             .await?;
-
-            println!("Resolved: {:#?}", resolved);
 
             let power_level_id =
                 resolved.get("m.room.power_levels", "").unwrap_or_default();
@@ -65,11 +58,6 @@ where
                 &store,
             )
             .await?;
-
-            println!(
-                "conflicted_standard_events: {:#?}",
-                conflicted_standard_events
-            );
 
             let resolved = iterative_auth_checks::<Self::Auth, _, _>(
                 &conflicted_standard_events,
@@ -388,8 +376,6 @@ async fn iterative_auth_checks<
         }
 
         let result = A::check(event, &auth_map, store).await;
-
-        println!("Auth check for {} passed: {:?}", event.event_id(), result,);
 
         if result.is_ok() {
             new_state.add_event(
@@ -772,8 +758,6 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-        println!("{:#?}", final_state);
-
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
             Some(&pa),
@@ -908,8 +892,6 @@ mod tests {
             block_on(store.get_state_for(&[pb.clone(), pc.clone()]))
                 .unwrap()
                 .unwrap();
-
-        println!("{:#?}", final_state);
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1054,8 +1036,6 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-        println!("{:#?}", final_state);
-
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
             Some(&pa2),
@@ -1178,8 +1158,6 @@ mod tests {
             block_on(store.get_state_for(&[mb.clone(), t1.clone()]))
                 .unwrap()
                 .unwrap();
-
-        println!("{:#?}", final_state);
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1353,8 +1331,6 @@ mod tests {
             block_on(store.get_state_for(&[msg.clone(), t4.clone()]))
                 .unwrap()
                 .unwrap();
-
-        println!("{:#?}", final_state);
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),

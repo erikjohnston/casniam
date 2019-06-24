@@ -10,7 +10,6 @@ actix-web = "1.0.0"
 base64 = "0.10.1"
 chrono = "0.4.6"
 failure = "0.1.5"
-futures-preview = "0.3.0-alpha.5"
 petgraph = "0.4.13"
 prettytable-rs = "0.8.0"
 rand = "0.6.5"
@@ -28,6 +27,11 @@ git = "https://github.com/NegativeMjark/indolentjson-rust.git"
 [dependencies.serde_json]
 features = ["raw_value"]
 version = "1.0.27"
+
+[dependencies.futures]
+package = "futures-preview"
+version = "=0.3.0-alpha.16"
+features = ["async-await", "nightly", "compat"]
 
 [dependencies.sha1]
 features = ["std"]
