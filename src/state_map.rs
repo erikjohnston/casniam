@@ -205,62 +205,76 @@ where
     }
 
     pub fn keys(&self) -> impl Iterator<Item = (&str, &str)> {
-        let w = self.well_known.keys().map(|k| (k.as_str(), ""));
+        let well_known = self.well_known.keys().map(|k| (k.as_str(), ""));
 
-        let m = self.membership.keys().map(|u| (TYPE_MEMBERSHIP, u as &str));
+        let members =
+            self.membership.keys().map(|u| (TYPE_MEMBERSHIP, u as &str));
 
-        let a = self.aliases.keys().map(|s| (TYPE_ALIASES, s as &str));
+        let aliases = self.aliases.keys().map(|s| (TYPE_ALIASES, s as &str));
 
-        let i = self
+        let invites = self
             .invites
             .keys()
             .map(|t| (TYPE_THIRD_PARTY_INVITE, t as &str));
 
-        let o = self
+        let others = self
             .others
             .iter()
             .flat_map(|(t, h)| h.keys().map(move |s| (t as &str, s as &str)));
 
-        w.chain(m).chain(a).chain(i).chain(o)
+        well_known
+            .chain(members)
+            .chain(aliases)
+            .chain(invites)
+            .chain(others)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ((&str, &str), &E)> {
-        let w = self.well_known.iter().map(|(k, e)| ((k.as_str(), ""), e));
+        let well_known =
+            self.well_known.iter().map(|(k, e)| ((k.as_str(), ""), e));
 
-        let m = self
+        let members = self
             .membership
             .iter()
             .map(|(u, e)| ((TYPE_MEMBERSHIP, u as &str), e));
 
-        let a = self
+        let aliases = self
             .aliases
             .iter()
             .map(|(s, e)| ((TYPE_ALIASES, s as &str), e));
 
-        let i = self
+        let invites = self
             .invites
             .iter()
             .map(|(t, e)| ((TYPE_THIRD_PARTY_INVITE, t as &str), e));
 
-        let o = self.others.iter().flat_map(|(t, h)| {
+        let others = self.others.iter().flat_map(|(t, h)| {
             h.iter().map(move |(s, e)| ((t as &str, s as &str), e))
         });
 
-        w.chain(m).chain(a).chain(i).chain(o)
+        well_known
+            .chain(members)
+            .chain(aliases)
+            .chain(invites)
+            .chain(others)
     }
 
     pub fn values(&self) -> impl Iterator<Item = &E> {
-        let w = self.well_known.values();
+        let well_known = self.well_known.values();
 
-        let m = self.membership.values();
+        let members = self.membership.values();
 
-        let a = self.aliases.values();
+        let aliases = self.aliases.values();
 
-        let i = self.invites.values();
+        let invites = self.invites.values();
 
-        let o = self.others.values().flat_map(|h| h.values());
+        let others = self.others.values().flat_map(|h| h.values());
 
-        w.chain(m).chain(a).chain(i).chain(o)
+        well_known
+            .chain(members)
+            .chain(aliases)
+            .chain(invites)
+            .chain(others)
     }
 
     pub fn iter_members(&self) -> impl Iterator<Item = (&str, &E)> {
@@ -383,14 +397,14 @@ where
             match entry {
                 hash_map::Entry::Occupied(o) => {
                     if o.get() != value {
-                        return Some(o.remove());
+                        Some(o.remove())
                     } else {
-                        return None;
+                        None
                     }
                 }
                 hash_map::Entry::Vacant(v) => {
                     v.insert(value.clone());
-                    return None;
+                    None
                 }
             }
         } else {
@@ -399,20 +413,20 @@ where
                     match o.get_mut().entry(s.into()) {
                         hash_map::Entry::Occupied(o) => {
                             if o.get() != value {
-                                return Some(o.remove());
+                                Some(o.remove())
                             } else {
-                                return None;
+                                None
                             }
                         }
                         hash_map::Entry::Vacant(v) => {
                             v.insert(value.clone());
-                            return None;
+                            None
                         }
                     }
                 }
                 hash_map::Entry::Vacant(v) => {
                     v.insert(HashMap::new()).insert(s.into(), value.clone());
-                    return None;
+                    None
                 }
             }
         }

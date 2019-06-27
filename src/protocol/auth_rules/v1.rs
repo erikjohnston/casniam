@@ -338,7 +338,7 @@ where
         }
 
         if let Some(state_key) = self.event.state_key() {
-            if state_key.starts_with("@") && state_key != self.event.sender() {
+            if state_key.starts_with('@') && state_key != self.event.sender() {
                 bail!("cannot have user state_key");
             }
         }

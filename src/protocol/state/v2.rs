@@ -161,7 +161,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     let mut conflicted_power_events = Vec::new();
     let mut conflicted_standard_events = BTreeMap::new();
 
-    for (_, ev) in &full_conflicted_set {
+    for ev in full_conflicted_set.values() {
         if is_power_event(ev) {
             conflicted_power_events.push(ev.clone());
         } else {
@@ -172,7 +172,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
     // We need to move all conflicted_standard_events that are in the power
     // events auth chain into conflicted_power_events
     // TODO: So much cloning...
-    let mut stack: Vec<_> = conflicted_power_events.iter().cloned().collect();
+    let mut stack: Vec<_> = conflicted_power_events.to_vec();
     while let Some(ev) = stack.pop() {
         if let Some(ee) = conflicted_standard_events.remove(ev.event_id()) {
             conflicted_power_events.push(ee);
