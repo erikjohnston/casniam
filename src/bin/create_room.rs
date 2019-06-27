@@ -13,8 +13,10 @@ use sodiumoxide::crypto::sign;
 
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
-use casniam::protocol::{Event, RoomVersion, RoomVersion4};
-use casniam::stores::memory;
+use casniam::protocol::{
+    DagChunkFragment, Event, Handler, RoomVersion, RoomVersion4,
+};
+use casniam::stores::{memory, EventStore};
 
 fn to_value(
     value: serde_json::Value,
@@ -44,32 +46,63 @@ where
 
     let creator = format!("@alice:{}", server_name);
 
-    let create = EventBuilder::new(
-        room_id.clone(),
-        creator.clone(),
-        "m.room.create".to_string(),
-        Some("".to_string()),
-    )
-    .with_content(to_value(json!({
-        "creator": creator,
-    })))
-    .build::<R, _>(&database)
-    .await?;
+    let handler = Handler::new(database.clone());
 
-    let member = EventBuilder::new(
-        room_id,
-        creator.clone(),
-        "m.room.member".to_string(),
-        Some(creator.clone()),
-    )
-    .with_prev_events(vec![create.event_id().to_string()])
-    .with_content(to_value(json!({
-        "membership": "join",
-    })))
-    .build::<R, _>(&database)
-    .await?;
+    let mut chunk = DagChunkFragment::new();
 
-    Ok(HttpResponse::Ok().json(json!({ "events": vec![create, member] })))
+    let builders = vec![
+        EventBuilder::new(
+            room_id.clone(),
+            creator.clone(),
+            "m.room.create".to_string(),
+            Some("".to_string()),
+        )
+        .with_content(to_value(json!({
+            "creator": creator,
+        }))),
+        EventBuilder::new(
+            room_id,
+            creator.clone(),
+            "m.room.member".to_string(),
+            Some(creator.clone()),
+        )
+        .with_content(to_value(json!({
+            "membership": "join",
+        }))),
+    ];
+
+    for builder in builders {
+        let prev_events = chunk
+            .forward_extremities()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let state = database.get_state_for(&prev_events).await?.unwrap();
+
+        let event = builder
+            .with_prev_events(prev_events)
+            .origin(server_name.clone())
+            .build::<R, _>(&database)
+            .await?;
+        database.insert_event(event.clone(), state.clone());
+        chunk.add_event(event).unwrap();
+    }
+
+    let stuff = handler.handle_chunk::<R>(chunk).await?;
+
+    for info in &stuff {
+        assert!(!info.rejected);
+    }
+
+    let last_event_id = stuff.last().unwrap().event.event_id();
+
+    let state = database.get_state_for(&[last_event_id]).await?.unwrap();
+
+    Ok(HttpResponse::Ok().json(json!({
+        "events": stuff.into_iter().map(|p| p.event).collect::<Vec<_>>(),
+        "state": state.values().cloned().collect::<Vec<_>>(),
+    })))
 }
 
 fn main() -> std::io::Result<()> {

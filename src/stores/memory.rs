@@ -143,7 +143,7 @@ where
             let mut group_chain = BTreeSet::new();
 
             let mut stack: Vec<&str> =
-                group.into_iter().map(|e| e.as_ref()).collect();
+                group.into_iter().map(AsRef::as_ref).collect();
             let mut new_stack = Vec::new();
 
             while !stack.is_empty() {
@@ -170,10 +170,10 @@ where
         }
 
         let union = auth_chains.iter().fold(BTreeSet::new(), |u, x| {
-            x.union(&u).map(|e| e.to_string()).collect()
+            x.union(&u).map(ToString::to_string).collect()
         });
         let intersection = auth_chains.iter().fold(union.clone(), |u, x| {
-            x.intersection(&u).map(|e| e.to_string()).collect()
+            x.intersection(&u).map(ToString::to_string).collect()
         });
 
         let differences = union.difference(&intersection);

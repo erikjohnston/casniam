@@ -15,7 +15,7 @@ use crate::stores::EventStore;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string
-        .splitn(2, ":")
+        .splitn(2, ':')
         .nth(1)
         .ok_or_else(|| format_err!("invalid ID"))
 }
@@ -187,7 +187,7 @@ where
                     let creator = creation_event
                         .content()
                         .get("creator")
-                        .and_then(|v| v.as_str());
+                        .and_then(Value::as_str);
                     if creator == Some(&state_key) {
                         return Ok(());
                     }

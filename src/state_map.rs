@@ -37,8 +37,8 @@ pub enum WellKnownEmptyKeys {
 }
 
 impl WellKnownEmptyKeys {
-    pub fn as_str(&self) -> &'static str {
-        match *self {
+    pub fn as_str(self) -> &'static str {
+        match self {
             WellKnownEmptyKeys::Create => TYPE_CREATE,
             WellKnownEmptyKeys::PowerLevels => TYPE_POWER_LEVELS,
             WellKnownEmptyKeys::JoinRules => TYPE_JOIN_RULES,
@@ -187,16 +187,11 @@ where
         }
 
         match (t, s) {
-            (TYPE_MEMBERSHIP, user) => self.membership.remove(user.into()),
-            (TYPE_ALIASES, server) => self.aliases.remove(server.into()),
-            (TYPE_THIRD_PARTY_INVITE, token) => {
-                self.invites.remove(token.into())
-            }
+            (TYPE_MEMBERSHIP, user) => self.membership.remove(user),
+            (TYPE_ALIASES, server) => self.aliases.remove(server),
+            (TYPE_THIRD_PARTY_INVITE, token) => self.invites.remove(token),
 
-            (t, s) => self
-                .others
-                .get_mut(t.into())
-                .and_then(|m| m.remove(s.into())),
+            (t, s) => self.others.get_mut(t).and_then(|m| m.remove(s)),
         };
     }
 
@@ -268,7 +263,7 @@ where
 
         let invites = self.invites.values();
 
-        let others = self.others.values().flat_map(|h| h.values());
+        let others = self.others.values().flat_map(HashMap::values);
 
         well_known
             .chain(members)
@@ -318,12 +313,16 @@ where
     }
 
     pub fn len(&self) -> usize {
-        let others: usize = self.others.values().map(|x| x.len()).sum();
+        let others: usize = self.others.values().map(HashMap::len).sum();
         self.well_known.len()
             + self.membership.len()
             + self.aliases.len()
             + self.invites.len()
             + others
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

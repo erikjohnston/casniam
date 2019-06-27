@@ -8,7 +8,6 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Debug;
-
 use std::pin::Pin;
 
 use failure::Error;
@@ -231,6 +230,15 @@ impl<E> DagChunkFragment<E>
 where
     E: Event,
 {
+    pub fn new() -> DagChunkFragment<E> {
+        DagChunkFragment {
+            event_ids: HashSet::new(),
+            events: Vec::new(),
+            backwards_extremities: HashSet::new(),
+            forward_extremities: HashSet::new(),
+        }
+    }
+
     pub fn from_events(mut events: Vec<E>) -> Vec<DagChunkFragment<E>> {
         topological_sort(&mut events);
 
@@ -289,6 +297,10 @@ where
         // TODO: Handle adding batches of events
 
         Err(event)
+    }
+
+    pub fn forward_extremities(&self) -> &HashSet<String> {
+        &self.forward_extremities
     }
 }
 
@@ -505,7 +517,7 @@ mod tests {
 
         let missing = topological_sort(&mut events);
 
-        let order: Vec<&str> = events.iter().map(|e| e.event_id()).collect();
+        let order: Vec<&str> = events.iter().map(Event::event_id).collect();
 
         let expected_order = vec!["B", "C", "D"];
 

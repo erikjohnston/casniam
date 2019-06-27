@@ -20,7 +20,15 @@ pub trait EventStore: Clone + 'static {
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 
-    fn missing_events<'a, I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+    fn insert_event(
+        &self,
+        event: Self::Event,
+        state: Self::RoomState,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+        self.insert_events(iter::once((event, state)))
+    }
+
+    fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>>;

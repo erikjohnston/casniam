@@ -22,7 +22,7 @@ fn test_create_room() {
     };
 
     builder = builder.with_content(content);
-    builder = builder.origin("example.com");
+    builder.origin("example.com");
 
     // TODO: Actually create the event.
 }

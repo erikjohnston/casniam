@@ -230,7 +230,7 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
     let mut graph = DiGraphMap::new();
     let mut ordering = BTreeMap::new();
 
-    let mut to_add: Vec<_> = events.iter().map(|e| e.event_id()).collect();
+    let mut to_add: Vec<_> = events.iter().map(Event::event_id).collect();
     while let Some(e_id) = to_add.pop() {
         let ev = auth_diff_map[e_id];
 
