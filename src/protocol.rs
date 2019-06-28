@@ -4,6 +4,7 @@ use futures::future::Future;
 use petgraph::visit::Walker;
 use serde_json::Value;
 use sodiumoxide::crypto::sign;
+use log::info;
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -20,7 +21,7 @@ pub mod server_keys;
 pub mod state;
 // pub mod v1;
 
-pub trait Event: Clone + fmt::Debug {
+pub trait Event: Sync + Send + Clone + fmt::Debug {
     fn auth_event_ids(&self) -> Vec<&str>;
     fn content(&self) -> &serde_json::Map<String, Value>;
     fn depth(&self) -> i64;
@@ -188,12 +189,17 @@ impl<ES: EventStore> Handler<ES> {
                 await!(V::State::resolve_state(states, &self.event_store))?;
 
             // FIXME: Differentiate between DB and auth errors.
-            let rejected = await!(V::Auth::check(
+            let rejected = match await!(V::Auth::check(
                 &event,
                 &state_before,
                 &self.event_store
-            ))
-            .is_err();
+            )) {
+                Ok(()) => false,
+                Err(err) => {
+                    info!("Denied event {} because: {}", event.event_type(), err);
+                    true
+                }
+            };
 
             let mut state_after = state_before.clone();
             if !rejected {

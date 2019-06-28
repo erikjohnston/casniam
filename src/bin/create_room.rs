@@ -11,11 +11,15 @@ use serde::Serialize;
 use serde_json::json;
 use sodiumoxide::crypto::sign;
 
+use std::sync::{Arc, Mutex};
+
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::{
-    DagChunkFragment, Event, Handler, RoomVersion, RoomVersion4,
+    DagChunkFragment, Event, Handler, PersistEventInfo, RoomVersion,
+    RoomVersion4,
 };
+use casniam::state_map::StateMap;
 use casniam::stores::{memory, EventStore};
 
 fn to_value(
@@ -28,24 +32,16 @@ fn to_value(
 }
 
 async fn generate_room<R>(
+    room_id: String,
     server_name: String,
     key_name: String,
     secret_key: sign::SecretKey,
     database: memory::MemoryEventStore<R>,
-) -> Result<HttpResponse, Error>
+) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
 where
     R: RoomVersion,
     R::Event: Serialize,
 {
-    let room_id = format!(
-        "!{}:{}",
-        thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>(),
-        server_name,
-    );
-
     let creator = format!("@alice:{}", server_name);
 
     let handler = Handler::new(database.clone());
@@ -60,16 +56,45 @@ where
             Some("".to_string()),
         )
         .with_content(to_value(json!({
+            "room_version": "4",  // FIXME
             "creator": creator,
         }))),
         EventBuilder::new(
-            room_id,
+            room_id.clone(),
             creator.clone(),
             "m.room.member".to_string(),
             Some(creator.clone()),
         )
         .with_content(to_value(json!({
             "membership": "join",
+        }))),
+        EventBuilder::new(
+            room_id.clone(),
+            creator.clone(),
+            "m.room.power_levels".to_string(),
+            Some("".to_string()),
+        )
+        .with_content(to_value(json!({
+            "users": {
+                creator.clone(): 100,
+            },
+            "users_default": 100,
+            "events": {},
+            "events_default": 0,
+            "state_default": 50,
+            "ban": 50,
+            "kick": 50,
+            "redact": 50,
+            "invite": 0
+        }))),
+        EventBuilder::new(
+            room_id.clone(),
+            creator.clone(),
+            "m.room.join_rules".to_string(),
+            Some("".to_string()),
+        )
+        .with_content(to_value(json!({
+            "join_rule": "public",
         }))),
     ];
 
@@ -100,8 +125,38 @@ where
         assert!(!info.rejected);
     }
 
-    let last_event_id = stuff.last().unwrap().event.event_id();
+    Ok(stuff)
+}
 
+async fn render_room<R>(
+    server_name: String,
+    key_name: String,
+    secret_key: sign::SecretKey,
+    database: memory::MemoryEventStore<R>,
+) -> Result<HttpResponse, Error>
+where
+    R: RoomVersion,
+    R::Event: Serialize,
+{
+    let room_id = format!(
+        "!{}:{}",
+        thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(10)
+            .collect::<String>(),
+        server_name,
+    );
+
+    let stuff = generate_room(
+        room_id,
+        server_name,
+        key_name,
+        secret_key,
+        database.clone(),
+    )
+    .await?;
+
+    let last_event_id = stuff.last().unwrap().event.event_id();
     let state = database.get_state_for(&[last_event_id]).await?.unwrap();
 
     Ok(HttpResponse::Ok().json(json!({
@@ -110,10 +165,122 @@ where
     })))
 }
 
+async fn make_join<R>(
+    room_id: String,
+    user_id: String,
+    server_name: String,
+    key_name: String,
+    secret_key: sign::SecretKey,
+    database: memory::MemoryEventStore<R>,
+) -> Result<HttpResponse, Error>
+where
+    R: RoomVersion,
+    R::Event: Serialize,
+{
+    let stuff = generate_room(
+        room_id.clone(),
+        server_name.clone(),
+        key_name.clone(),
+        secret_key.clone(),
+        database.clone(),
+    )
+    .await?;
+
+    let last_event_id = stuff.last().unwrap().event.event_id().to_string();
+
+    let prev_events = vec![last_event_id];
+
+    let mut event = EventBuilder::new(
+        room_id,
+        user_id.clone(),
+        "m.room.member".to_string(),
+        Some(user_id.clone()),
+    )
+    .with_content(to_value(json!({
+        "membership": "join",
+    })))
+    .with_prev_events(prev_events)
+    .origin(server_name.clone())
+    .build::<R, _>(&database)
+    .await?;
+
+    event.sign(server_name.clone(), key_name.clone(), &secret_key);
+
+    Ok(HttpResponse::Ok().json(json!({
+        "room_version": "4",
+        "event": event,
+    })))
+}
+
+async fn send_join<R>(
+    room_id: String,
+    event: R::Event,
+    server_name: String,
+    key_name: String,
+    secret_key: sign::SecretKey,
+    database: memory::MemoryEventStore<R>,
+) -> Result<HttpResponse, Error>
+where
+    R: RoomVersion,
+    R::Event: Serialize,
+{
+    let event_id = event.event_id().to_string();
+
+    let chunk = DagChunkFragment::from_event(event);
+    let handler = Handler::new(database.clone());
+    let mut stuff = handler.handle_chunk::<R>(chunk).await?;
+
+    for info in &mut stuff {
+        assert!(!info.rejected);
+
+        info.event
+            .sign(server_name.clone(), key_name.clone(), &secret_key);
+        database.insert_event(info.event.clone(), info.state_before.clone());
+    }
+
+    let state = database.get_state_for(&[&event_id]).await?.unwrap();
+
+    let state_events = database.get_events(state.values()).await?;
+
+    Ok(HttpResponse::Ok().json(json!([200, {
+        "origin": server_name,
+        "state": state_events.clone(),
+        "auth_chain": state_events,
+    }])))
+}
+
+#[derive(Clone)]
+struct AppData {
+    server_name: String,
+    key_id: String,
+    secret_key: sign::SecretKey,
+    room_databases: Arc<Mutex<anymap::Map<dyn anymap::any::Any + Send>>>,
+}
+
+impl AppData {
+    fn get_database<R: RoomVersion>(&self) -> memory::MemoryEventStore<R> {
+        let mut map = self.room_databases.lock().unwrap();
+        map.entry().or_insert_with(memory::new_memory_store).clone()
+    }
+}
+
 fn main() -> std::io::Result<()> {
+    env_logger::init();
+
     let server_name = "localhost:9999".to_string();
 
-    let (pubkey, seckey) = sign::gen_keypair();
+    let mut ssl_builder = openssl::ssl::SslAcceptor::mozilla_intermediate(
+        openssl::ssl::SslMethod::tls(),
+    )
+    .unwrap();
+    ssl_builder
+        .set_certificate_file("cert.crt", openssl::ssl::SslFiletype::PEM)
+        .unwrap();
+    ssl_builder
+        .set_private_key_file("cert.key", openssl::ssl::SslFiletype::PEM)
+        .unwrap();
+
+    let (pubkey, secret_key) = sign::gen_keypair();
     let key_id = format!(
         "ed25519:{}",
         thread_rng()
@@ -123,9 +290,7 @@ fn main() -> std::io::Result<()> {
     );
 
     let mut verify_keys = BTreeMap::new();
-    verify_keys.insert(key_id.clone(), (pubkey, seckey.clone()));
-
-    let database = memory::new_memory_store::<RoomVersion4>();
+    verify_keys.insert(key_id.clone(), (pubkey, secret_key.clone()));
 
     let key_server_servlet = KeyServerServlet::new(
         server_name.clone(),
@@ -133,33 +298,85 @@ fn main() -> std::io::Result<()> {
         BTreeMap::new(),
     );
 
+    let app_data = AppData {
+        server_name,
+        key_id,
+        secret_key,
+        room_databases: Arc::new(Mutex::new(anymap::Map::new())),
+    };
+
     HttpServer::new(move || {
-        let server_name = server_name.clone();
-        let database = database.clone();
         let key_server_servlet = key_server_servlet.clone();
 
-        let key_id = key_id.clone();
-        let secret_key = seckey.clone();
-
         App::new()
+            .data(app_data.clone())
+            .wrap(actix_web::middleware::Logger::default())
             .service(
                 web::resource("/_matrix/key/v2/server*")
                     .route(web::get().to(move || key_server_servlet.render())),
             )
             .service(web::resource("/create_room").route(web::get().to_async(
-                move || {
+                move |app_data: web::Data<AppData>| {
                     compat::Compat::new(
-                        generate_room(
-                            server_name.clone(),
-                            key_id.clone(),
-                            secret_key.clone(),
-                            database.clone(),
+                        render_room(
+                            app_data.server_name.clone(),
+                            app_data.key_id.clone(),
+                            app_data.secret_key.clone(),
+                            app_data.get_database::<RoomVersion4>(),
                         )
                         .boxed_local(),
                     )
                 },
             )))
+            .service(
+                web::resource(
+                    "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
+                )
+                .route(web::get().to_async(
+                    move |(path, app_data): (
+                        web::Path<(String, String)>,
+                        web::Data<AppData>,
+                    )| {
+                        compat::Compat::new(
+                            make_join(
+                                path.0.clone(),
+                                path.1.clone(),
+                                app_data.server_name.clone(),
+                                app_data.key_id.clone(),
+                                app_data.secret_key.clone(),
+                                app_data.get_database::<RoomVersion4>(),
+                            )
+                            .boxed_local(),
+                        )
+                    },
+                )),
+            )
+            .service(
+                web::resource(
+                    "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
+                )
+                .route(web::put().to_async(
+                    move |(path, app_data, event): (
+                        web::Path<(String, String)>,
+                        web::Data<AppData>,
+                        web::Json<<RoomVersion4 as RoomVersion>::Event>,
+                    )| {
+                        compat::Compat::new(
+                            send_join(
+                                path.0.clone(),
+                                event.0,
+                                app_data.server_name.clone(),
+                                app_data.key_id.clone(),
+                                app_data.secret_key.clone(),
+                                app_data.get_database::<RoomVersion4>(),
+                            )
+                            .boxed_local(),
+                        )
+                    },
+                )),
+            )
     })
     .bind("127.0.0.1:8088")?
+    .bind_ssl("127.0.0.1:9999", ssl_builder)?
     .run()
 }

@@ -11,7 +11,7 @@ use futures::FutureExt;
 pub mod memory;
 
 pub trait EventStore: Clone + 'static {
-    type Event: Event;
+    type Event: Event + Send;
     type RoomState: RoomState;
     type RoomVersion: RoomVersion<Event = Self::Event>;
 

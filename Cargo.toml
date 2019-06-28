@@ -6,7 +6,6 @@ version = "0.1.0"
 
 [dependencies]
 # actix = "0.7.9"
-actix-web = "1.0.0"
 base64 = "0.10.1"
 chrono = "0.4.6"
 failure = "0.1.5"
@@ -20,6 +19,10 @@ smallvec = "0.6.9"
 sodiumoxide = "0.2.1"
 tokio = "0.1.11"
 tokio-async-await = "0.1.0"
+anymap = "0.12.1"
+openssl = "0.10.23"
+env_logger = "0.6.1"
+log = "0.4.6"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
@@ -36,6 +39,10 @@ features = ["async-await", "nightly", "compat"]
 [dependencies.sha1]
 features = ["std"]
 version = "0.6.0"
+
+[dependencies.actix-web]
+features = ["ssl"]
+version = "1.0.0"
 
 #[replace."cookie:0.11.0"]
 #git = "https://github.com/alexcrichton/cookie-rs.git"
