@@ -3,6 +3,7 @@ use crate::stores::EventStore;
 use futures::future::Future;
 use petgraph::visit::Walker;
 use serde_json::Value;
+use sodiumoxide::crypto::sign;
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -36,6 +37,13 @@ pub trait Event: Clone + fmt::Debug {
         builder: events::EventBuilder,
         event_store: &E,
     ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
+
+    fn sign(
+        &mut self,
+        server_name: String,
+        key_name: String,
+        key: &sign::SecretKey,
+    );
 }
 
 pub trait RoomStateResolver {
@@ -430,6 +438,15 @@ mod tests {
             _builder: events::EventBuilder,
             _event_store: &E,
         ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
+            unimplemented!()
+        }
+
+        fn sign(
+            &mut self,
+            _server_name: String,
+            _key_name: String,
+            _key: &sign::SecretKey,
+        ) {
             unimplemented!()
         }
     }

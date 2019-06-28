@@ -9,6 +9,7 @@ use failure::Error;
 use futures::{Future, FutureExt};
 use serde::de::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
+use sodiumoxide::crypto::sign;
 use std::cmp::max;
 use std::pin::Pin;
 
@@ -92,6 +93,10 @@ impl SignedEventV3 {
     pub fn signed(&self) -> &Signed<EventV2> {
         &self.signed
     }
+
+    pub fn signed_mut(&mut self) -> &mut Signed<EventV2> {
+        &mut self.signed
+    }
 }
 
 impl Event for SignedEventV3 {
@@ -158,6 +163,15 @@ impl Event for SignedEventV3 {
     ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
         let event_store = event_store.clone();
         Self::from_builder::<R, E>(builder, event_store).boxed_local()
+    }
+
+    fn sign(
+        &mut self,
+        server_name: String,
+        key_name: String,
+        key: &sign::SecretKey,
+    ) {
+        self.signed_mut().sign(server_name, key_name, key);
     }
 }
 

@@ -29,6 +29,8 @@ fn to_value(
 
 async fn generate_room<R>(
     server_name: String,
+    key_name: String,
+    secret_key: sign::SecretKey,
     database: memory::MemoryEventStore<R>,
 ) -> Result<HttpResponse, Error>
 where
@@ -80,11 +82,14 @@ where
 
         let state = database.get_state_for(&prev_events).await?.unwrap();
 
-        let event = builder
+        let mut event = builder
             .with_prev_events(prev_events)
             .origin(server_name.clone())
             .build::<R, _>(&database)
             .await?;
+
+        event.sign(server_name.clone(), key_name.clone(), &secret_key);
+
         database.insert_event(event.clone(), state.clone());
         chunk.add_event(event).unwrap();
     }
@@ -118,7 +123,7 @@ fn main() -> std::io::Result<()> {
     );
 
     let mut verify_keys = BTreeMap::new();
-    verify_keys.insert(key_id, (pubkey, seckey));
+    verify_keys.insert(key_id.clone(), (pubkey, seckey.clone()));
 
     let database = memory::new_memory_store::<RoomVersion4>();
 
@@ -132,6 +137,10 @@ fn main() -> std::io::Result<()> {
         let server_name = server_name.clone();
         let database = database.clone();
         let key_server_servlet = key_server_servlet.clone();
+
+        let key_id = key_id.clone();
+        let secret_key = seckey.clone();
+
         App::new()
             .service(
                 web::resource("/_matrix/key/v2/server*")
@@ -140,8 +149,13 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/create_room").route(web::get().to_async(
                 move || {
                     compat::Compat::new(
-                        generate_room(server_name.clone(), database.clone())
-                            .boxed_local(),
+                        generate_room(
+                            server_name.clone(),
+                            key_id.clone(),
+                            secret_key.clone(),
+                            database.clone(),
+                        )
+                        .boxed_local(),
                     )
                 },
             )))
