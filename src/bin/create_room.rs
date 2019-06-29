@@ -249,6 +249,19 @@ where
     }])))
 }
 
+async fn get_events<R>(
+    room_id: String,
+    database: memory::MemoryEventStore<R>,
+) -> Result<HttpResponse, Error>
+where
+    R: RoomVersion,
+    R::Event: Serialize,
+{
+    Ok(HttpResponse::Ok().json(json!([200, {
+        "pdus": [],
+    }])))
+}
+
 #[derive(Clone)]
 struct AppData {
     server_name: String,
@@ -374,6 +387,28 @@ fn main() -> std::io::Result<()> {
                         )
                     },
                 )),
+            )
+            .service(
+                web::resource("/_matrix/federation/v1/send/{txn_id}").route(
+                    web::put().to(move || HttpResponse::Ok().json(json!({}))),
+                ),
+            )
+            .service(
+                web::resource("/_matrix/federation/v1/backfill/{room_id}")
+                    .route(web::get().to_async(
+                        move |(path, app_data): (
+                            web::Path<(String, String)>,
+                            web::Data<AppData>,
+                        )| {
+                            compat::Compat::new(
+                                get_events(
+                                    path.0.clone(),
+                                    app_data.get_database::<RoomVersion4>(),
+                                )
+                                .boxed_local(),
+                            )
+                        },
+                    )),
             )
     })
     .bind("127.0.0.1:8088")?

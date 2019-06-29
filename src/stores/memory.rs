@@ -16,13 +16,42 @@ pub struct MemoryEventStoreInner<R: RoomVersion> {
     state_map: BTreeMap<String, StateMap<String>>,
 }
 
-pub type MemoryEventStore<R> = Arc<RwLock<MemoryEventStoreInner<R>>>;
+pub struct MemoryEventStore<R: RoomVersion>(
+    Arc<RwLock<MemoryEventStoreInner<R>>>,
+);
 
 pub fn new_memory_store<R: RoomVersion>() -> MemoryEventStore<R> {
-    Arc::new(RwLock::new(MemoryEventStoreInner {
+    MemoryEventStore(Arc::new(RwLock::new(MemoryEventStoreInner {
         event_map: BTreeMap::new(),
         state_map: BTreeMap::new(),
-    }))
+    })))
+}
+
+impl<R> MemoryEventStore<R>
+where
+    R: RoomVersion + 'static,
+    R::Event: 'static,
+{
+    pub fn get_all_events(&self) -> Vec<R::Event> {
+        let store = self.0.read().expect("Mutex poisoned");
+
+        store.event_map.values().cloned().collect()
+    }
+
+    pub fn get_backfill(&self, event_ids: Vec<String>, limit: usize) {
+        let store = self.0.read().expect("Mutex poisoned");
+
+        let stack = event_ids;
+    }
+}
+
+impl<R> Clone for MemoryEventStore<R>
+where
+    R: RoomVersion,
+{
+    fn clone(&self) -> MemoryEventStore<R> {
+        MemoryEventStore(self.0.clone())
+    }
 }
 
 impl<R> EventStore for MemoryEventStore<R>
@@ -38,7 +67,7 @@ where
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
-        let mut store = self.write().expect("Mutex poisoned");
+        let mut store = self.0.write().expect("Mutex poisoned");
 
         for (event, state) in events {
             store.state_map.insert(event.event_id().to_string(), state);
@@ -55,7 +84,7 @@ where
         &self,
         event_ids: I,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
-        let store = self.read().expect("Mutex poisoned");
+        let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
@@ -71,7 +100,7 @@ where
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
-        let store = self.read().expect("Mutex poisoned");
+        let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
@@ -92,7 +121,7 @@ where
             Vec::with_capacity(event_ids.len());
 
         {
-            let store = self.read().expect("Mutex poisoned");
+            let store = self.0.read().expect("Mutex poisoned");
             for e_id in event_ids {
                 let e_id = e_id.as_ref();
 
@@ -134,7 +163,7 @@ where
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
-        let store = self.read().expect("Mutex poisoned");
+        let store = self.0.read().expect("Mutex poisoned");
 
         let mut auth_chains: Vec<BTreeSet<String>> =
             Vec::with_capacity(event_ids.len());

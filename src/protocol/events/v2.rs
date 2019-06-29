@@ -343,9 +343,9 @@ pub fn redact<E: serde::de::DeserializeOwned>(
     };
 
     match &etype[..] {
-        "m.room.membership" => copy_content("membership"),
+        "m.room.member" => copy_content("membership"),
         "m.room.create" => copy_content("creator"),
-        "m.room.join_rule" => copy_content("join_rule"),
+        "m.room.join_rules" => copy_content("join_rule"),
         "m.room.aliases" => copy_content("aliases"),
         "m.room.history_visibility" => copy_content("history_visibility"),
         "m.room.power_levels" => {

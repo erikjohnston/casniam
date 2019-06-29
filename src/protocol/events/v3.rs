@@ -171,7 +171,20 @@ impl Event for SignedEventV3 {
         key_name: String,
         key: &sign::SecretKey,
     ) {
-        self.signed_mut().sign(server_name, key_name, key);
+        let redacted: serde_json::Value =
+            redact(self.signed()).expect("EventV3 should always serialize.");
+
+        let bytes = serialize_canonically_remove_fields(
+            redacted,
+            &["signatures", "unsigned"],
+        )
+        .expect("EventV3 should always serialize.");
+
+        println!("Signing bytes: {}", std::str::from_utf8(&bytes).unwrap());
+
+        let sig = sign::sign_detached(&bytes, key);
+
+        self.signed_mut().add_signature(server_name, key_name, sig);
     }
 }
 

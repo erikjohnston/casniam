@@ -1,10 +1,10 @@
 use crate::stores::EventStore;
 
 use futures::future::Future;
+use log::info;
 use petgraph::visit::Walker;
 use serde_json::Value;
 use sodiumoxide::crypto::sign;
-use log::info;
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -196,7 +196,11 @@ impl<ES: EventStore> Handler<ES> {
             )) {
                 Ok(()) => false,
                 Err(err) => {
-                    info!("Denied event {} because: {}", event.event_type(), err);
+                    info!(
+                        "Denied event {} because: {}",
+                        event.event_type(),
+                        err
+                    );
                     true
                 }
             };

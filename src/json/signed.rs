@@ -34,6 +34,18 @@ where
 }
 
 impl<V, U> Signed<V, U> {
+    pub fn add_signature(
+        &mut self,
+        server_name: String,
+        key_name: String,
+        signature: Signature,
+    ) {
+        self.signatures
+            .entry(server_name)
+            .or_default()
+            .insert(key_name, Base64Signature(signature));
+    }
+
     pub fn sign(
         &mut self,
         server_name: String,
