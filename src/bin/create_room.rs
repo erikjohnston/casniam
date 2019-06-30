@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use actix_web::{self, web, App, HttpResponse, HttpServer};
 use failure::Error;
 use futures::{compat, FutureExt};
+use log::info;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde::Serialize;
@@ -72,7 +73,7 @@ where
             room_id.clone(),
             creator.clone(),
             "m.room.power_levels".to_string(),
-            Some("".to_string()),
+            Some(""),
         )
         .with_content(to_value(json!({
             "users": {
@@ -91,10 +92,20 @@ where
             room_id.clone(),
             creator.clone(),
             "m.room.join_rules".to_string(),
-            Some("".to_string()),
+            Some(""),
         )
         .with_content(to_value(json!({
             "join_rule": "public",
+        }))),
+        EventBuilder::new(
+            room_id.clone(),
+            creator.clone(),
+            "m.room.message".to_string(),
+            None as Option<String>,
+        )
+        .with_content(to_value(json!({
+            "msgtype": "m.text",
+            "body": "Hello!",
         }))),
     ];
 
@@ -213,7 +224,7 @@ where
 }
 
 async fn send_join<R>(
-    room_id: String,
+    _room_id: String,
     event: R::Event,
     server_name: String,
     key_name: String,
@@ -249,17 +260,22 @@ where
     }])))
 }
 
-async fn get_events<R>(
-    room_id: String,
+async fn get_backfill<R>(
+    _room_id: String,
+    event_ids: Vec<String>,
+    limit: usize,
     database: memory::MemoryEventStore<R>,
 ) -> Result<HttpResponse, Error>
 where
     R: RoomVersion,
     R::Event: Serialize,
 {
-    Ok(HttpResponse::Ok().json(json!([200, {
-        "pdus": [],
-    }])))
+    let backfill_ids = database.get_backfill(event_ids, limit);
+    let events = database.get_events(backfill_ids).await?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "pdus": events,
+    })))
 }
 
 #[derive(Clone)]
@@ -396,13 +412,36 @@ fn main() -> std::io::Result<()> {
             .service(
                 web::resource("/_matrix/federation/v1/backfill/{room_id}")
                     .route(web::get().to_async(
-                        move |(path, app_data): (
-                            web::Path<(String, String)>,
+                        move |(path, query, app_data): (
+                            web::Path<(String,)>,
+                            web::Query<Vec<(String, String)>>,
                             web::Data<AppData>,
                         )| {
+                            let mut event_ids = Vec::new();
+                            let mut limit = 100;
+
+                            for (key, value) in query.into_inner() {
+                                match &*key {
+                                    "v" => event_ids.push(value),
+                                    "limit" => {
+                                        if let Ok(l) = value.parse() {
+                                            limit = l
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            info!(
+                                "Got backfill request with ids: {:?}",
+                                event_ids
+                            );
+
                             compat::Compat::new(
-                                get_events(
+                                get_backfill(
                                     path.0.clone(),
+                                    event_ids,
+                                    limit,
                                     app_data.get_database::<RoomVersion4>(),
                                 )
                                 .boxed_local(),
