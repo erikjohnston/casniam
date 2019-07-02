@@ -1,4 +1,5 @@
 #![feature(await_macro, async_await)]
+#![allow(clippy::type_complexity)]
 
 #[macro_use]
 extern crate serde_derive;

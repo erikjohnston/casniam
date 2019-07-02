@@ -1,4 +1,5 @@
 #![feature(await_macro, async_await)]
+#![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;
 
