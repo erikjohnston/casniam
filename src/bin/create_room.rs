@@ -270,8 +270,7 @@ where
     R: RoomVersion,
     R::Event: Serialize,
 {
-    let backfill_ids = database.get_backfill(event_ids, limit);
-    let events = database.get_events(backfill_ids).await?;
+    let events = database.get_backfill(event_ids, limit).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "pdus": events,

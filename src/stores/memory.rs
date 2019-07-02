@@ -5,7 +5,7 @@ use crate::stores::EventStore;
 use failure::Error;
 use futures::{future, Future, FutureExt};
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem::swap;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
@@ -36,32 +36,6 @@ where
         let store = self.0.read().expect("Mutex poisoned");
 
         store.event_map.values().cloned().collect()
-    }
-
-    pub fn get_backfill(
-        &self,
-        event_ids: Vec<String>,
-        limit: usize,
-    ) -> Vec<String> {
-        let store = self.0.read().expect("Mutex poisoned");
-
-        let mut queue = VecDeque::from(event_ids);
-        let mut to_return = Vec::new();
-
-        while let Some(event_id) = queue.pop_front() {
-            if let Some(event) = store.event_map.get(&event_id) {
-                to_return.push(event_id.clone());
-                queue.extend(
-                    event.prev_event_ids().into_iter().map(ToString::to_string),
-                )
-            }
-
-            if to_return.len() >= limit {
-                break;
-            }
-        }
-
-        to_return
     }
 }
 

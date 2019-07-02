@@ -56,6 +56,39 @@ pub trait EventStore: Clone + 'static {
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
+
+    fn get_backfill(
+        &self,
+        event_ids: Vec<String>,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
+        let database = self.clone();
+
+        async move {
+            let mut queue = event_ids;
+            let mut to_return = Vec::new();
+
+            'top: while !queue.is_empty() {
+                let events = database.get_events(queue.drain(..)).await?;
+                for event in events {
+                    queue.extend(
+                        event
+                            .prev_event_ids()
+                            .into_iter()
+                            .map(ToString::to_string),
+                    );
+                    to_return.push(event);
+
+                    if to_return.len() >= limit {
+                        break 'top;
+                    }
+                }
+            }
+
+            Ok(to_return)
+        }
+            .boxed_local()
+    }
 }
 
 pub trait RoomStore: Clone + 'static {
