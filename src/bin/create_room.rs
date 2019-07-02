@@ -51,57 +51,37 @@ where
     let mut chunk = DagChunkFragment::new();
 
     let builders = vec![
+        EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
+            .with_content(to_value(json!({
+                "room_version": R::version(),
+                "creator": creator,
+            }))),
+        EventBuilder::new(&room_id, &creator, "m.room.member", Some(&creator))
+            .with_content(to_value(json!({
+                "membership": "join",
+            }))),
+        EventBuilder::new(&room_id, &creator, "m.room.power_levels", Some(""))
+            .with_content(to_value(json!({
+                "users": {
+                    &creator: 100,
+                },
+                "users_default": 100,
+                "events": {},
+                "events_default": 0,
+                "state_default": 50,
+                "ban": 50,
+                "kick": 50,
+                "redact": 50,
+                "invite": 0
+            }))),
+        EventBuilder::new(&room_id, &creator, "m.room.join_rules", Some(""))
+            .with_content(to_value(json!({
+                "join_rule": "public",
+            }))),
         EventBuilder::new(
-            room_id.clone(),
-            creator.clone(),
-            "m.room.create".to_string(),
-            Some("".to_string()),
-        )
-        .with_content(to_value(json!({
-            "room_version": R::version(),
-            "creator": creator,
-        }))),
-        EventBuilder::new(
-            room_id.clone(),
-            creator.clone(),
-            "m.room.member".to_string(),
-            Some(creator.clone()),
-        )
-        .with_content(to_value(json!({
-            "membership": "join",
-        }))),
-        EventBuilder::new(
-            room_id.clone(),
-            creator.clone(),
-            "m.room.power_levels".to_string(),
-            Some(""),
-        )
-        .with_content(to_value(json!({
-            "users": {
-                creator.clone(): 100,
-            },
-            "users_default": 100,
-            "events": {},
-            "events_default": 0,
-            "state_default": 50,
-            "ban": 50,
-            "kick": 50,
-            "redact": 50,
-            "invite": 0
-        }))),
-        EventBuilder::new(
-            room_id.clone(),
-            creator.clone(),
-            "m.room.join_rules".to_string(),
-            Some(""),
-        )
-        .with_content(to_value(json!({
-            "join_rule": "public",
-        }))),
-        EventBuilder::new(
-            room_id.clone(),
-            creator.clone(),
-            "m.room.message".to_string(),
+            &room_id,
+            &creator,
+            "m.room.message",
             None as Option<String>,
         )
         .with_content(to_value(json!({
@@ -111,11 +91,8 @@ where
     ];
 
     for builder in builders {
-        let prev_events = chunk
-            .forward_extremities()
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let prev_events: Vec<_> =
+            chunk.forward_extremities().iter().cloned().collect();
 
         let state = database.get_state_for(&prev_events).await?.unwrap();
 
