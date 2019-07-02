@@ -98,6 +98,8 @@ pub trait RoomVersion: 'static {
     type Event: Event;
     type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
+
+    fn version() -> &'static str;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,6 +111,8 @@ impl RoomVersion for RoomVersion3 {
     type State = state::RoomStateResolverV2<
         auth_rules::AuthV1<events::v2::SignedEventV2>,
     >;
+
+    fn version() -> &'static str { "3" }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -120,6 +124,8 @@ impl RoomVersion for RoomVersion4 {
     type State = state::RoomStateResolverV2<
         auth_rules::AuthV1<events::v3::SignedEventV3>,
     >;
+
+    fn version() -> &'static str { "4" }
 }
 
 pub trait FederationClient {
@@ -598,6 +604,8 @@ mod tests {
         type Event = TestEvent;
         type State = DummyState;
         type Auth = DummyAuth;
+
+        fn version() -> &'static str { "dummy" }
     }
 
     #[derive(Clone, Debug)]
@@ -616,7 +624,6 @@ mod tests {
         }
 
         fn missing_events<
-            'a,
             I: IntoIterator<Item = impl AsRef<str> + ToString>,
         >(
             &self,

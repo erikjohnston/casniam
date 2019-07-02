@@ -58,7 +58,7 @@ where
             Some("".to_string()),
         )
         .with_content(to_value(json!({
-            "room_version": "4",  // FIXME
+            "room_version": R::version(),
             "creator": creator,
         }))),
         EventBuilder::new(
@@ -219,7 +219,7 @@ where
     event.sign(server_name.clone(), key_name.clone(), &secret_key);
 
     Ok(HttpResponse::Ok().json(json!({
-        "room_version": "4",
+        "room_version": R::version(),
         "event": event,
     })))
 }
@@ -351,7 +351,7 @@ fn main() -> std::io::Result<()> {
                             app_data.server_name.clone(),
                             app_data.key_id.clone(),
                             app_data.secret_key.clone(),
-                            app_data.get_database::<RoomVersion4>(),
+                            app_data.get_database::<RoomVersion4>(), // FIXME
                         )
                         .boxed_local(),
                     )
@@ -373,7 +373,7 @@ fn main() -> std::io::Result<()> {
                                 app_data.server_name.clone(),
                                 app_data.key_id.clone(),
                                 app_data.secret_key.clone(),
-                                app_data.get_database::<RoomVersion4>(),
+                                app_data.get_database::<RoomVersion4>(), // FIXME
                             )
                             .boxed_local(),
                         )
@@ -388,7 +388,7 @@ fn main() -> std::io::Result<()> {
                     move |(path, app_data, event): (
                         web::Path<(String, String)>,
                         web::Data<AppData>,
-                        web::Json<<RoomVersion4 as RoomVersion>::Event>,
+                        web::Json<<RoomVersion4 as RoomVersion>::Event>, // FIXME
                     )| {
                         compat::Compat::new(
                             send_join(
@@ -397,7 +397,7 @@ fn main() -> std::io::Result<()> {
                                 app_data.server_name.clone(),
                                 app_data.key_id.clone(),
                                 app_data.secret_key.clone(),
-                                app_data.get_database::<RoomVersion4>(),
+                                app_data.get_database::<RoomVersion4>(), // FIXME
                             )
                             .boxed_local(),
                         )
@@ -442,7 +442,7 @@ fn main() -> std::io::Result<()> {
                                     path.0.clone(),
                                     event_ids,
                                     limit,
-                                    app_data.get_database::<RoomVersion4>(),
+                                    app_data.get_database::<RoomVersion4>(), // FIXME
                                 )
                                 .boxed_local(),
                             )

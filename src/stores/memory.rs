@@ -202,7 +202,6 @@ where
         let differences = union.difference(&intersection);
 
         let events = differences
-            .into_iter()
             .filter_map(|e| store.event_map.get(e))
             .cloned()
             .collect();
