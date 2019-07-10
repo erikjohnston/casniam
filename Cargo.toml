@@ -11,7 +11,7 @@ chrono = "0.4.6"
 failure = "0.1.5"
 petgraph = "0.4.13"
 prettytable-rs = "0.8.0"
-rand = "0.6.5"
+rand = "0.7.0"
 serde = "1.0.84"
 serde_derive = "1.0.84"
 sha2 = "0.8.0"
@@ -34,7 +34,7 @@ version = "1.0.27"
 
 [dependencies.futures]
 package = "futures-preview"
-version = "=0.3.0-alpha.16"
+version = "=0.3.0-alpha.17"
 features = ["async-await", "nightly", "compat"]
 
 [dependencies.sha1]
