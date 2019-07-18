@@ -112,7 +112,9 @@ impl RoomVersion for RoomVersion3 {
         auth_rules::AuthV1<events::v2::SignedEventV2>,
     >;
 
-    fn version() -> &'static str { "3" }
+    fn version() -> &'static str {
+        "3"
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -125,7 +127,9 @@ impl RoomVersion for RoomVersion4 {
         auth_rules::AuthV1<events::v3::SignedEventV3>,
     >;
 
-    fn version() -> &'static str { "4" }
+    fn version() -> &'static str {
+        "4"
+    }
 }
 
 pub trait FederationClient {
@@ -135,10 +139,19 @@ pub trait FederationClient {
         back: Vec<String>,
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<E>, Error>>>>;
+
     fn get_state_at<S: RoomState>(
         &self,
         event_id: &str,
     ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
+}
+
+pub trait FederationTransactionQueue {
+    fn queue_events<V: RoomVersion>(
+        &self,
+        chunk: DagChunkFragment<V::Event>,
+        destinations: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = ()>>>;
 }
 
 pub struct Handler<E: EventStore> {
@@ -162,9 +175,10 @@ impl<ES: EventStore> Handler<ES> {
         let missing = get_missing(&chunk.events);
 
         if !missing.is_empty() {
-            let unknown_events = await!(self
-                .event_store
-                .missing_events(missing.iter().map(|e| e as &str)))?;
+            let unknown_events = await!(
+                self.event_store
+                    .missing_events(missing.iter().map(|e| e as &str)),
+            )?;
 
             if !unknown_events.is_empty() {
                 // TODO: Fetch missing events
@@ -198,7 +212,7 @@ impl<ES: EventStore> Handler<ES> {
             let rejected = match await!(V::Auth::check(
                 &event,
                 &state_before,
-                &self.event_store
+                &self.event_store,
             )) {
                 Ok(()) => false,
                 Err(err) => {
@@ -605,7 +619,9 @@ mod tests {
         type State = DummyState;
         type Auth = DummyAuth;
 
-        fn version() -> &'static str { "dummy" }
+        fn version() -> &'static str {
+            "dummy"
+        }
     }
 
     #[derive(Clone, Debug)]
