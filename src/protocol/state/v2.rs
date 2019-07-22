@@ -136,11 +136,12 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
         state_sets.push(state_set);
     }
 
-    let mut full_conflicted_set: BTreeMap<_, _> =
-        await!(store.get_conflicted_auth_chain(state_sets.clone()))?
-            .into_iter()
-            .map(|e| (e.event_id().to_string(), e))
-            .collect();
+    let mut full_conflicted_set: BTreeMap<_, _> = store
+        .get_conflicted_auth_chain(state_sets.clone())
+        .await?
+        .into_iter()
+        .map(|e| (e.event_id().to_string(), e))
+        .collect();
 
     let mut missing = Vec::new();
     for state_set in state_sets {
@@ -151,7 +152,7 @@ async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
         }
     }
 
-    let missing_evs = await!(store.get_events(&missing))?;
+    let missing_evs = store.get_events(&missing).await?;
     full_conflicted_set.extend(
         missing_evs
             .into_iter()
@@ -245,7 +246,7 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
                 graph.add_edge(e_id, aid, 0);
             }
         }
-        let pl = await!(get_power_level_for_sender(ev, store))?;
+        let pl = get_power_level_for_sender(ev, store).await?;
 
         graph.add_node(e_id);
         ordering.insert(e_id, (-pl, ev.origin_server_ts(), e_id));
@@ -276,7 +277,7 @@ async fn get_power_level_for_sender<'a>(
     event: &'a impl Event,
     store: &'a impl EventStore,
 ) -> Result<i64, Error> {
-    let auth_events = await!(store.get_events(event.auth_event_ids()))?;
+    let auth_events = store.get_events(event.auth_event_ids()).await?;
 
     let mut pl = None;
     let mut create = None;

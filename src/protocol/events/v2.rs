@@ -61,7 +61,9 @@ impl SignedEventV2 {
         );
 
         // TODO: Only pull out a subset of the state needed.
-        let state = await!(event_store.get_state_for(&builder.prev_events))?
+        let state = event_store
+            .get_state_for(&builder.prev_events)
+            .await?
             .ok_or_else(|| {
                 format_err!(
                     "No state for prev events: {:?}",
@@ -72,7 +74,7 @@ impl SignedEventV2 {
         let auth_events = state.get_event_ids(auth_types);
 
         let mut depth = 0;
-        let evs = await!(event_store.get_events(&builder.prev_events))?;
+        let evs = event_store.get_events(&builder.prev_events).await?;
         for ev in evs {
             depth = max(ev.depth(), depth);
         }

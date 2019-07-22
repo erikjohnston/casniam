@@ -67,7 +67,7 @@ where
     );
     let auth_event_ids = state.get_event_ids(types);
 
-    let auth_events_vec = await!(store.get_events(auth_event_ids))?;
+    let auth_events_vec = store.get_events(auth_event_ids).await?;
 
     let auth_events = auth_events_vec
         .into_iter()

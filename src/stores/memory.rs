@@ -146,7 +146,7 @@ where
         let store = self.clone();
 
         async move {
-            let state = await!(R::State::resolve_state(states, &store))?;
+            let state = R::State::resolve_state(states, &store).await?;
 
             Ok(Some(state))
         }

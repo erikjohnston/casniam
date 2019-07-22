@@ -63,7 +63,7 @@ impl EventBuilder {
         self,
         event_store: &E,
     ) -> Result<R::Event, Error> {
-        let event = await!(R::Event::from_builder::<R, E>(self, event_store))?;
+        let event = R::Event::from_builder::<R, E>(self, event_store).await?;
         Ok(event)
     }
 }

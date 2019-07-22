@@ -175,10 +175,10 @@ impl<ES: EventStore> Handler<ES> {
         let missing = get_missing(&chunk.events);
 
         if !missing.is_empty() {
-            let unknown_events = await!(
-                self.event_store
-                    .missing_events(missing.iter().map(|e| e as &str)),
-            )?;
+            let unknown_events = self
+                .event_store
+                .missing_events(missing.iter().map(|e| e as &str))
+                .await?;
 
             if !unknown_events.is_empty() {
                 // TODO: Fetch missing events
@@ -191,7 +191,7 @@ impl<ES: EventStore> Handler<ES> {
             HashMap::new();
 
         for event_id in &missing {
-            let state = await!(self.event_store.get_state_for(&[event_id]))?;
+            let state = self.event_store.get_state_for(&[event_id]).await?;
             event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
 
@@ -206,24 +206,23 @@ impl<ES: EventStore> Handler<ES> {
                 .collect();
 
             let state_before: ES::RoomState =
-                await!(V::State::resolve_state(states, &self.event_store))?;
+                V::State::resolve_state(states, &self.event_store).await?;
 
             // FIXME: Differentiate between DB and auth errors.
-            let rejected = match await!(V::Auth::check(
-                &event,
-                &state_before,
-                &self.event_store,
-            )) {
-                Ok(()) => false,
-                Err(err) => {
-                    info!(
-                        "Denied event {} because: {}",
-                        event.event_type(),
-                        err
-                    );
-                    true
-                }
-            };
+            let rejected =
+                match V::Auth::check(&event, &state_before, &self.event_store)
+                    .await
+                {
+                    Ok(()) => false,
+                    Err(err) => {
+                        info!(
+                            "Denied event {} because: {}",
+                            event.event_type(),
+                            err
+                        );
+                        true
+                    }
+                };
 
             let mut state_after = state_before.clone();
             if !rejected {
