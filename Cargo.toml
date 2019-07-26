@@ -24,6 +24,7 @@ openssl = "0.10.23"
 env_logger = "0.6.1"
 log = "0.4.6"
 serde_urlencoded = "0.5.5"
+awc = "0.2.2"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
