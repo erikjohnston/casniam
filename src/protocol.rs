@@ -3,6 +3,7 @@ use crate::stores::EventStore;
 use futures::future::Future;
 use log::info;
 use petgraph::visit::Walker;
+use serde::Serialize;
 use serde_json::Value;
 use sodiumoxide::crypto::sign;
 
@@ -21,7 +22,7 @@ pub mod json;
 pub mod server_keys;
 pub mod state;
 
-pub trait Event: Sync + Send + Clone + fmt::Debug {
+pub trait Event: Serialize + Sync + Send + Clone + fmt::Debug {
     fn auth_event_ids(&self) -> Vec<&str>;
     fn content(&self) -> &serde_json::Map<String, Value>;
     fn depth(&self) -> i64;
