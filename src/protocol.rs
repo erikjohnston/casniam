@@ -407,7 +407,7 @@ mod tests {
     use futures::executor::block_on;
     use futures::future;
 
-    #[derive(Deserialize, Debug, Clone)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     struct TestEvent {
         event_id: String,
         prev_events: Vec<String>,

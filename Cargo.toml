@@ -23,7 +23,7 @@ anymap = "0.12.1"
 openssl = "0.10.23"
 env_logger = "0.6.1"
 log = "0.4.6"
-serde_urlencoded = "0.5.5"
+serde_urlencoded = "0.6.1"
 awc = "0.2.2"
 
 [dependencies.indolentjson]
