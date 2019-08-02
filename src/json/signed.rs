@@ -52,11 +52,12 @@ impl<V, U> Signed<V, U> {
         key_name: String,
         key: &SecretKey,
     ) {
-        let sig = sign_detached(self.get_canonical().as_bytes(), key);
-        self.signatures
-            .entry(server_name)
-            .or_default()
-            .insert(key_name, Base64Signature(sig));
+        let sig = self.sign_detached(key);
+        self.add_signature(server_name, key_name, sig);
+    }
+
+    pub fn sign_detached(&self, key: &SecretKey) -> Signature {
+        sign_detached(self.get_canonical().as_bytes(), key)
     }
 }
 

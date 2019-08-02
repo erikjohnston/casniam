@@ -1,8 +1,9 @@
-#![feature(async_await)]
+#![feature(async_await, async_closure)]
 #![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;
 
+use actix_rt::Arbiter;
 use actix_web::{self, web, App, HttpResponse, HttpServer};
 use failure::Error;
 use futures::{compat, FutureExt};
@@ -15,6 +16,8 @@ use sodiumoxide::crypto::sign;
 
 use std::sync::{Arc, Mutex};
 
+use casniam::protocol::client::MemoryTransactionSender;
+use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::{
@@ -202,7 +205,7 @@ where
 }
 
 async fn send_join<R>(
-    _room_id: String,
+    room_id: String,
     event: R::Event,
     server_name: String,
     key_name: String,
@@ -214,6 +217,9 @@ where
     R::Event: Serialize,
 {
     let event_id = event.event_id().to_string();
+
+    let event_origin =
+        event.sender().splitn(2, ':').last().unwrap().to_string();
 
     let chunk = DagChunkFragment::from_event(event);
     let handler = Handler::new(database.clone());
@@ -228,14 +234,80 @@ where
     }
 
     let state = database.get_state_for(&[&event_id]).await?.unwrap();
-
     let state_events = database.get_events(state.values()).await?;
 
-    Ok(HttpResponse::Ok().json(json!([200, {
+    let resp = HttpResponse::Ok().json(json!([200, {
         "origin": server_name,
         "state": state_events.clone(),
         "auth_chain": state_events,
-    }])))
+    }]));
+
+    let prev_events = vec![event_id.clone()];
+    let send_fut = async move {
+        futures::compat::Compat01As03::new(tokio_timer::Delay::new(
+            std::time::Instant::now() + (std::time::Duration::from_secs(1)),
+        ))
+        .await
+        .unwrap();
+
+        let creator = format!("@alice:{}", server_name);
+
+        let builder = EventBuilder::new(
+            &room_id,
+            &creator,
+            "m.room.message",
+            None as Option<String>,
+        )
+        .with_content(to_value(json!({
+            "msgtype": "m.text",
+            "body": "Hello again!",
+        })));
+
+        let state =
+            database.get_state_for(&prev_events).await.unwrap().unwrap();
+
+        let mut event = builder
+            .with_prev_events(prev_events)
+            .origin(server_name.clone())
+            .build::<R, _>(&database)
+            .await
+            .unwrap();
+
+        event.sign(server_name.clone(), key_name.clone(), &secret_key);
+
+        database.insert_event(event.clone(), state.clone());
+
+        let mut ssl_builder =
+            openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+                .unwrap();
+
+        ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
+
+        let client = awc::Client::build()
+            .connector(
+                actix_http::client::Connector::new()
+                    .ssl(ssl_builder.build())
+                    .finish(),
+            )
+            .finish();
+
+        info!("Sending event to {}", event_origin);
+
+        let sender = MemoryTransactionSender {
+            client,
+            server_name,
+            key_name,
+            secret_key,
+        };
+        sender.send_event::<R>(event_origin, event).await.unwrap();
+
+        Ok(())
+    }
+        .boxed_local();
+
+    Arbiter::spawn(compat::Compat::new(send_fut));
+
+    Ok(resp)
 }
 
 async fn get_backfill<R>(
