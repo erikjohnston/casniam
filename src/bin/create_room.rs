@@ -89,7 +89,7 @@ where
         )
         .with_content(to_value(json!({
             "msgtype": "m.text",
-            "body": "Hello!",
+            "body": "Are you there?",
         }))),
     ];
 
@@ -221,7 +221,7 @@ where
     let event_origin =
         event.sender().splitn(2, ':').last().unwrap().to_string();
 
-    let chunk = DagChunkFragment::from_event(event);
+    let chunk = DagChunkFragment::from_event(event.clone());
     let handler = Handler::new(database.clone());
     let mut stuff = handler.handle_chunk::<R>(chunk).await?;
 
@@ -244,11 +244,31 @@ where
 
     let prev_events = vec![event_id.clone()];
     let send_fut = async move {
-        futures::compat::Compat01As03::new(tokio_timer::Delay::new(
-            std::time::Instant::now() + (std::time::Duration::from_secs(1)),
-        ))
-        .await
-        .unwrap();
+        let mut ssl_builder =
+            openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+                .unwrap();
+
+        ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
+
+        let client = awc::Client::build()
+            .connector(
+                actix_http::client::Connector::new()
+                    .ssl(ssl_builder.build())
+                    .finish(),
+            )
+            .finish();
+
+        let sender = MemoryTransactionSender {
+            client,
+            server_name: server_name.clone(),
+            key_name: key_name.clone(),
+            secret_key: secret_key.clone(),
+        };
+
+        sender
+            .send_event::<R>(event_origin.clone(), event)
+            .await
+            .unwrap();
 
         let creator = format!("@alice:{}", server_name);
 
@@ -260,7 +280,7 @@ where
         )
         .with_content(to_value(json!({
             "msgtype": "m.text",
-            "body": "Hello again!",
+            "body": "Hello! I don't actually have anything to say to you right now...",
         })));
 
         let state =
@@ -277,28 +297,40 @@ where
 
         database.insert_event(event.clone(), state.clone());
 
-        let mut ssl_builder =
-            openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
-                .unwrap();
+        info!("Sending event to {}", event_origin);
 
-        ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
+        sender
+            .send_event::<R>(event_origin.clone(), event.clone())
+            .await
+            .unwrap();
 
-        let client = awc::Client::build()
-            .connector(
-                actix_http::client::Connector::new()
-                    .ssl(ssl_builder.build())
-                    .finish(),
-            )
-            .finish();
+        let builder = EventBuilder::new(
+            &room_id,
+            &creator,
+            "m.room.member",
+            Some(creator.clone()),
+        )
+        .with_content(to_value(json!({
+            "membership": "leave",
+        })));
+
+        let prev_events = vec![event.event_id().to_string()];
+        let state =
+            database.get_state_for(&prev_events).await.unwrap().unwrap();
+
+        let mut event = builder
+            .with_prev_events(prev_events)
+            .origin(server_name.clone())
+            .build::<R, _>(&database)
+            .await
+            .unwrap();
+
+        event.sign(server_name.clone(), key_name.clone(), &secret_key);
+
+        database.insert_event(event.clone(), state.clone());
 
         info!("Sending event to {}", event_origin);
 
-        let sender = MemoryTransactionSender {
-            client,
-            server_name,
-            key_name,
-            secret_key,
-        };
         sender.send_event::<R>(event_origin, event).await.unwrap();
 
         Ok(())
