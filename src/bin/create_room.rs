@@ -329,6 +329,8 @@ where
 
         database.insert_event(event.clone(), state.clone());
 
+        compat::Compat01As03::new(tokio_timer::Delay::new(std::time::Instant::now() + std::time::Duration::from_millis(500))).await.unwrap();
+
         info!("Sending event to {}", event_origin);
 
         sender.send_event::<R>(event_origin, event).await.unwrap();
@@ -352,7 +354,7 @@ where
     R: RoomVersion,
     R::Event: Serialize,
 {
-    let events = database.get_backfill(event_ids, limit).await?;
+    let mut events = database.get_backfill(event_ids, limit).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "pdus": events,
