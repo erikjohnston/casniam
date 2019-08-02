@@ -17,6 +17,7 @@ pub trait TransactionSender {
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 }
 
+#[derive(Clone, Default)]
 pub struct MemoryTransactionSender {
     client: awc::Client,
 }
@@ -41,7 +42,9 @@ impl TransactionSender for MemoryTransactionSender {
             futures::compat::Compat01As03::new(
                 client
                     .put(format!("https://{}{}", destination, path))
-                    .send_json(&event),
+                    .send_json(&serde_json::json!({
+                        "pduds": [event],
+                    })),
             )
             .await
             .map_err(|e| format_err!("{}", e))?;
