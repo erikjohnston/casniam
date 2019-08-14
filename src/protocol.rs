@@ -48,6 +48,24 @@ pub trait Event: Serialize + Sync + Send + Clone + fmt::Debug {
     );
 }
 
+pub trait DagNode {
+    fn id(&self) -> &str;
+    fn prevs(&self) -> Vec<&str>;
+}
+
+impl<E> DagNode for E
+where
+    E: Event,
+{
+    fn id(&self) -> &str {
+        self.event_id()
+    }
+
+    fn prevs(&self) -> Vec<&str> {
+        self.prev_event_ids()
+    }
+}
+
 pub trait RoomStateResolver {
     type Auth: AuthRules;
 
@@ -266,7 +284,7 @@ pub struct DagChunkFragment<E> {
 
 impl<E> DagChunkFragment<E>
 where
-    E: Event,
+    E: DagNode,
 {
     pub fn new() -> DagChunkFragment<E> {
         DagChunkFragment {
@@ -301,32 +319,28 @@ where
     pub fn from_event(event: E) -> DagChunkFragment<E> {
         DagChunkFragment {
             backwards_extremities: event
-                .prev_event_ids()
+                .prevs()
                 .iter()
                 .map(|e| e.to_string())
                 .collect(),
-            forward_extremities: vec![event.event_id().to_string()]
+            forward_extremities: vec![event.id().to_string()]
                 .into_iter()
                 .collect(),
-            event_ids: vec![event.event_id().to_string()].into_iter().collect(),
+            event_ids: vec![event.id().to_string()].into_iter().collect(),
             events: vec![event],
         }
     }
 
     pub fn add_event(&mut self, event: E) -> Result<(), E> {
-        let backwards: Vec<_> = event
-            .prev_event_ids()
-            .iter()
-            .map(|e| e.to_string())
-            .collect();
+        let backwards: Vec<_> =
+            event.prevs().iter().map(|e| e.to_string()).collect();
 
         if backwards.iter().all(|e| self.event_ids.contains(e)) {
             for e in &backwards {
                 self.forward_extremities.remove(e);
             }
-            self.forward_extremities
-                .insert(event.event_id().to_string());
-            self.event_ids.insert(event.event_id().to_string());
+            self.forward_extremities.insert(event.id().to_string());
+            self.event_ids.insert(event.id().to_string());
             self.events.push(event);
             return Ok(());
         }
@@ -344,20 +358,18 @@ where
 
 /// Sorts the given vector of events into topological order, with "earliest"
 /// events first.
-fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
+fn topological_sort(events: &mut Vec<impl DagNode>) -> HashSet<String> {
     let (ordering, missing) = {
         let mut graph = petgraph::graphmap::DiGraphMap::new();
         let mut missing: HashSet<String> = HashSet::new();
 
-        let event_map: HashMap<_, _> = events
-            .iter()
-            .map(|e| (e.event_id().to_string(), e))
-            .collect();
+        let event_map: HashMap<_, _> =
+            events.iter().map(|e| (e.id().to_string(), e)).collect();
 
         for event in event_map.values() {
-            for prev_event_id in &event.prev_event_ids() {
+            for prev_event_id in &event.prevs() {
                 if event_map.contains_key(prev_event_id as &str) {
-                    graph.add_edge(event.event_id(), prev_event_id, 0);
+                    graph.add_edge(event.id(), prev_event_id, 0);
                 } else {
                     missing.insert(prev_event_id.to_string());
                 }
@@ -374,7 +386,7 @@ fn topological_sort(events: &mut Vec<impl Event>) -> HashSet<String> {
         (ordering, missing)
     };
 
-    events.sort_unstable_by_key(|event| ordering[event.event_id()]);
+    events.sort_unstable_by_key(|event| ordering[event.id()]);
 
     missing
 }

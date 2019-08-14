@@ -354,7 +354,7 @@ where
     R: RoomVersion,
     R::Event: Serialize,
 {
-    let mut events = database.get_backfill(event_ids, limit).await?;
+    let events = database.get_backfill(event_ids, limit).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "pdus": events,

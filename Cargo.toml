@@ -38,7 +38,7 @@ version = "1.0.27"
 
 [dependencies.futures]
 package = "futures-preview"
-version = "=0.3.0-alpha.17"
+version = "=0.3.0-alpha.18"
 features = ["async-await", "nightly", "compat"]
 
 [dependencies.sha1]

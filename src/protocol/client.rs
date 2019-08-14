@@ -51,7 +51,7 @@ impl TransactionSender for MemoryTransactionSender {
         let request_json = RequestJson {
             method: "PUT".to_string(),
             uri: path.clone(),
-            origin: "localhost:9999".to_string(),
+            origin: self.server_name.clone(),
             destination: destination.clone(),
             content: Some(content.clone()),
         };
