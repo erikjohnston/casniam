@@ -3,7 +3,7 @@ pub mod v3;
 
 use failure::Error;
 
-use crate::protocol::{DagNode, Event, RoomVersion};
+use crate::protocol::{Event, RoomVersion};
 use crate::stores::EventStore;
 
 pub struct EventBuilder {

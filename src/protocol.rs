@@ -118,7 +118,7 @@ pub trait RoomVersion: 'static {
     type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
 
-    fn version() -> &'static str;
+    const VERSION: &'static str;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -131,9 +131,7 @@ impl RoomVersion for RoomVersion3 {
         auth_rules::AuthV1<events::v2::SignedEventV2>,
     >;
 
-    fn version() -> &'static str {
-        "3"
-    }
+    const VERSION: &'static str = "3";
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -146,9 +144,7 @@ impl RoomVersion for RoomVersion4 {
         auth_rules::AuthV1<events::v3::SignedEventV3>,
     >;
 
-    fn version() -> &'static str {
-        "4"
-    }
+    const VERSION: &'static str = "4";
 }
 
 pub trait FederationClient {
@@ -631,9 +627,7 @@ mod tests {
         type State = DummyState;
         type Auth = DummyAuth;
 
-        fn version() -> &'static str {
-            "dummy"
-        }
+        const VERSION: &'static str = "DUMMY";
     }
 
     #[derive(Clone, Debug)]

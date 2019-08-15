@@ -56,7 +56,7 @@ where
     let builders = vec![
         EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
             .with_content(to_value(json!({
-                "room_version": R::version(),
+                "room_version": R::VERSION,
                 "creator": creator,
             }))),
         EventBuilder::new(&room_id, &creator, "m.room.member", Some(&creator))
@@ -199,7 +199,7 @@ where
     event.sign(server_name.clone(), key_name.clone(), &secret_key);
 
     Ok(HttpResponse::Ok().json(json!({
-        "room_version": R::version(),
+        "room_version": R::VERSION,
         "event": event,
     })))
 }
