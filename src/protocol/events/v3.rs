@@ -63,6 +63,8 @@ impl SignedEventV3 {
             depth = max(ev.depth(), depth);
         }
 
+        depth += 1;
+
         let event = EventV2::from_builder(builder, auth_events, depth)?;
         let signed = Signed::wrap(event)?;
         Ok(Self::from_signed(signed))

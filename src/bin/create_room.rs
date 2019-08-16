@@ -12,6 +12,7 @@ use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sodiumoxide::crypto::sign;
 
 use std::sync::{Arc, Mutex};
@@ -62,6 +63,7 @@ where
         EventBuilder::new(&room_id, &creator, "m.room.member", Some(&creator))
             .with_content(to_value(json!({
                 "membership": "join",
+                "displayname": "Alice",
             }))),
         EventBuilder::new(&room_id, &creator, "m.room.power_levels", Some(""))
             .with_content(to_value(json!({
@@ -531,6 +533,23 @@ fn main() -> std::io::Result<()> {
                             )
                         },
                     )),
+            )
+            .service(
+                web::resource("/_matrix/federation/v1/query/directory").route(
+                    web::get().to(move |(app_data, query): (web::Data<AppData>, web::Query<Vec<(String, String)>>,)| {
+                        let query_map: BTreeMap<_, _> = query.into_inner().into_iter().collect();
+
+                        let room_alias = &query_map["room_alias"];
+
+                        let room_id = format!(
+                            "!{}:{}",
+                            base64::encode_config(&Sha256::digest(room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
+                            app_data.server_name.clone(),
+                        );
+
+                        HttpResponse::Ok().json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))
+                    }),
+                ),
             )
     })
     .bind("127.0.0.1:8088")?
