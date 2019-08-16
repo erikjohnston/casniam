@@ -54,18 +54,24 @@ where
 
     let mut chunk = DagChunkFragment::new();
 
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
+        .timestamp_millis() as u64;
+
     let builders = vec![
         EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
+            .origin_server_ts(yesterday)
             .with_content(to_value(json!({
                 "room_version": R::VERSION,
                 "creator": creator,
             }))),
         EventBuilder::new(&room_id, &creator, "m.room.member", Some(&creator))
+            .origin_server_ts(yesterday)
             .with_content(to_value(json!({
                 "membership": "join",
                 "displayname": "Alice",
             }))),
         EventBuilder::new(&room_id, &creator, "m.room.power_levels", Some(""))
+            .origin_server_ts(yesterday)
             .with_content(to_value(json!({
                 "users": {
                     &creator: 100,
@@ -80,6 +86,7 @@ where
                 "invite": 0
             }))),
         EventBuilder::new(&room_id, &creator, "m.room.join_rules", Some(""))
+            .origin_server_ts(yesterday)
             .with_content(to_value(json!({
                 "join_rule": "public",
             }))),
@@ -89,6 +96,7 @@ where
             "m.room.message",
             None as Option<String>,
         )
+        .origin_server_ts(yesterday)
         .with_content(to_value(json!({
             "msgtype": "m.text",
             "body": "Are you there?",
