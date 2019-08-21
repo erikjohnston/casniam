@@ -1,4 +1,3 @@
-#![feature(async_await, async_closure)]
 #![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;

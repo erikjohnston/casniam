@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use std::collections::BTreeMap;
 
 use actix_web::{web, App, HttpResponse, HttpServer};

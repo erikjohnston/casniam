@@ -1,4 +1,3 @@
-#![feature(async_await)]
 #![allow(clippy::type_complexity)]
 
 #[macro_use]
