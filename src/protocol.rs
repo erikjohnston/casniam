@@ -20,6 +20,7 @@ pub mod client;
 pub mod events;
 pub mod json;
 pub mod server_keys;
+pub mod server_resolver;
 pub mod state;
 
 pub trait Event: Serialize + Sync + Send + Clone + fmt::Debug {

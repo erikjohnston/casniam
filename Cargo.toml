@@ -28,6 +28,8 @@ awc = "0.2.2"
 tokio-timer = "0.2.11"
 actix-rt = "0.2.4"
 actix-http = "0.2.8"
+trust-dns-resolver = "0.12.0"
+http = "0.1.18"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
