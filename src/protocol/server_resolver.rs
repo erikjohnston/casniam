@@ -1,4 +1,5 @@
-use futures::{compat, FutureExt};
+use futures::compat::Future01CompatExt;
+use futures::FutureExt;
 use http::Uri;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -26,11 +27,12 @@ impl MatrixResolver {
         let (resolver, background_future) =
             trust_dns_resolver::AsyncResolver::from_system_conf()?;
 
-        let fut = compat::Compat01As03::new(background_future).map(|_| ());
+        let fut = background_future.compat().map(|_| ());
 
         Ok((MatrixResolver { resolver }, fut))
     }
 
+    /// Does SRV lookup, but not delegation.
     pub async fn resolve_server_name_from_uri(
         &self,
         uri: &Uri,
@@ -52,8 +54,7 @@ impl MatrixResolver {
 
         // TODO: Do lookup
 
-        let records =
-            compat::Compat01As03::new(self.resolver.lookup_srv(host)).await?;
+        let records = self.resolver.lookup_srv(host).compat().await?;
 
         let mut priority_map: BTreeMap<u16, Vec<_>> = BTreeMap::new();
 

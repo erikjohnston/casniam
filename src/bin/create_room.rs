@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use actix_rt::Arbiter;
 use actix_web::{self, web, App, HttpResponse, HttpServer};
 use failure::Error;
-use futures::{compat, FutureExt};
+use futures::compat::Future01CompatExt;
+use futures::{FutureExt, TryFutureExt};
 use log::info;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -338,7 +339,7 @@ where
 
         database.insert_event(event.clone(), state.clone());
 
-        compat::Compat01As03::new(tokio_timer::Delay::new(std::time::Instant::now() + std::time::Duration::from_millis(500))).await.unwrap();
+        tokio_timer::Delay::new(std::time::Instant::now() + std::time::Duration::from_millis(500)).compat().await.unwrap();
 
         info!("Sending event to {}", event_origin);
 
@@ -348,7 +349,7 @@ where
     }
         .boxed_local();
 
-    Arbiter::spawn(compat::Compat::new(send_fut));
+    Arbiter::spawn(send_fut.compat());
 
     Ok(resp)
 }
@@ -438,15 +439,13 @@ fn main() -> std::io::Result<()> {
             )
             .service(web::resource("/create_room").route(web::get().to_async(
                 move |app_data: web::Data<AppData>| {
-                    compat::Compat::new(
-                        render_room(
-                            app_data.server_name.clone(),
-                            app_data.key_id.clone(),
-                            app_data.secret_key.clone(),
-                            app_data.get_database::<RoomVersion4>(), // FIXME
-                        )
-                        .boxed_local(),
+                    render_room(
+                        app_data.server_name.clone(),
+                        app_data.key_id.clone(),
+                        app_data.secret_key.clone(),
+                        app_data.get_database::<RoomVersion4>(), // FIXME
                     )
+                    .boxed_local().compat()
                 },
             )))
             .service(
@@ -458,17 +457,15 @@ fn main() -> std::io::Result<()> {
                         web::Path<(String, String)>,
                         web::Data<AppData>,
                     )| {
-                        compat::Compat::new(
-                            make_join(
-                                path.0.clone(),
-                                path.1.clone(),
-                                app_data.server_name.clone(),
-                                app_data.key_id.clone(),
-                                app_data.secret_key.clone(),
-                                app_data.get_database::<RoomVersion4>(), // FIXME
-                            )
-                            .boxed_local(),
+                        make_join(
+                            path.0.clone(),
+                            path.1.clone(),
+                            app_data.server_name.clone(),
+                            app_data.key_id.clone(),
+                            app_data.secret_key.clone(),
+                            app_data.get_database::<RoomVersion4>(), // FIXME
                         )
+                        .boxed_local().compat()
                     },
                 )),
             )
@@ -482,17 +479,15 @@ fn main() -> std::io::Result<()> {
                         web::Data<AppData>,
                         web::Json<<RoomVersion4 as RoomVersion>::Event>, // FIXME
                     )| {
-                        compat::Compat::new(
-                            send_join(
-                                path.0.clone(),
-                                event.0,
-                                app_data.server_name.clone(),
-                                app_data.key_id.clone(),
-                                app_data.secret_key.clone(),
-                                app_data.get_database::<RoomVersion4>(), // FIXME
-                            )
-                            .boxed_local(),
+                        send_join(
+                            path.0.clone(),
+                            event.0,
+                            app_data.server_name.clone(),
+                            app_data.key_id.clone(),
+                            app_data.secret_key.clone(),
+                            app_data.get_database::<RoomVersion4>(), // FIXME
                         )
+                        .boxed_local().compat()
                     },
                 )),
             )
@@ -529,15 +524,13 @@ fn main() -> std::io::Result<()> {
                                 event_ids
                             );
 
-                            compat::Compat::new(
-                                get_backfill(
-                                    path.0.clone(),
-                                    event_ids,
-                                    limit,
-                                    app_data.get_database::<RoomVersion4>(), // FIXME
-                                )
-                                .boxed_local(),
+                            get_backfill(
+                                path.0.clone(),
+                                event_ids,
+                                limit,
+                                app_data.get_database::<RoomVersion4>(), // FIXME
                             )
+                            .boxed_local().compat()
                         },
                     )),
             )

@@ -1,4 +1,5 @@
 use failure::Error;
+use futures::compat::Future01CompatExt;
 use futures::FutureExt;
 use rand::Rng;
 
@@ -66,14 +67,13 @@ impl TransactionSender for MemoryTransactionSender {
         );
 
         async move {
-            futures::compat::Compat01As03::new(
-                client
-                    .put(format!("https://{}{}", destination, path))
-                    .header("Authorization", auth_header)
-                    .send_json(&content),
-            )
-            .await
-            .map_err(|e| format_err!("{}", e))?;
+            client
+                .put(format!("https://{}{}", destination, path))
+                .header("Authorization", auth_header)
+                .send_json(&content)
+                .compat()
+                .await
+                .map_err(|e| format_err!("{}", e))?;
 
             Ok(())
         }
