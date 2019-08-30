@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::collections::{hash_map, HashMap};
 use std::fmt::Debug;
 use std::iter::FromIterator;
+use std::str::FromStr;
 
 const TYPE_CREATE: &str = "m.room.create";
 const TYPE_POWER_LEVELS: &str = "m.room.power_levels";
@@ -72,6 +73,14 @@ impl WellKnownEmptyKeys {
             TYPE_ENCRYPTION => Some(WellKnownEmptyKeys::Encryption),
             _ => None,
         }
+    }
+}
+
+impl FromStr for WellKnownEmptyKeys {
+    type Err = failure::Error;
+
+    fn from_str(t: &str) -> Result<Self, failure::Error> {
+        Self::from_str(t).ok_or_else(|| format_err!("Not a valid well_known"))
     }
 }
 

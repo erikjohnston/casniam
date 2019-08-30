@@ -18,10 +18,12 @@ pub struct Endpoint {
 #[derive(Clone)]
 pub struct MatrixResolver {
     resolver: trust_dns_resolver::AsyncResolver,
+    http_client: awc::Client,
 }
 
 impl MatrixResolver {
     pub fn new(
+        http_client: awc::Client,
     ) -> Result<(MatrixResolver, impl Future<Output = ()>), failure::Error>
     {
         let (resolver, background_future) =
@@ -29,17 +31,23 @@ impl MatrixResolver {
 
         let fut = background_future.compat().map(|_| ());
 
-        Ok((MatrixResolver { resolver }, fut))
+        Ok((
+            MatrixResolver {
+                resolver,
+                http_client,
+            },
+            fut,
+        ))
     }
 
-    /// Does SRV lookup, but not delegation.
+    /// Does SRV lookup
     pub async fn resolve_server_name_from_uri(
         &self,
         uri: &Uri,
     ) -> Result<Vec<Endpoint>, failure::Error> {
-        let authority = uri.authority_part().expect("URI has no authority");
-        let host = uri.host().expect("URI has no host");
-        let port = uri.port_u16();
+        let mut authority = uri.authority_part().expect("URI has no authority");
+        let mut host = uri.host().expect("URI has no host");
+        let mut port = uri.port_u16();
 
         // If a literal IP or includes port then we shortcircuit.
         if host.parse::<IpAddr>().is_ok() || port.is_some() {
@@ -53,6 +61,18 @@ impl MatrixResolver {
         }
 
         // TODO: Do lookup
+        if let Some(server) = get_well_known(&self.http_client, host).await {}
+
+        // If a literal IP or includes port then we shortcircuit.
+        if host.parse::<IpAddr>().is_ok() || port.is_some() {
+            return Ok(vec![Endpoint {
+                host: host.to_string(),
+                port: port.unwrap_or(8448),
+
+                host_header: authority.to_string(),
+                tls_name: host.to_string(),
+            }]);
+        }
 
         let records = self.resolver.lookup_srv(host).compat().await?;
 
@@ -78,6 +98,28 @@ impl MatrixResolver {
             }))
         }
 
-        return Ok(results);
+        Ok(results)
     }
+}
+
+async fn get_well_known(
+    http_client: &awc::Client,
+    host: &str,
+) -> Option<WellKnownServer> {
+    http_client
+        .get(format!("https://{}/.well-known/matrix/server", host))
+        .send()
+        .compat()
+        .await
+        .ok()?
+        .json()
+        .compat()
+        .await
+        .ok()?
+}
+
+#[derive(Deserialize)]
+struct WellKnownServer {
+    #[serde(rename = "m.server")]
+    server: String,
 }

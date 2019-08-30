@@ -71,10 +71,7 @@ where
         future::ok(()).boxed()
     }
 
-    fn missing_events<
-        'a,
-        I: IntoIterator<Item = impl AsRef<str> + ToString>,
-    >(
+    fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
@@ -166,7 +163,7 @@ where
             let mut group_chain = BTreeSet::new();
 
             let mut stack: Vec<&str> =
-                group.into_iter().map(AsRef::as_ref).collect();
+                group.iter().map(AsRef::as_ref).collect();
             let mut new_stack = Vec::new();
 
             while !stack.is_empty() {
