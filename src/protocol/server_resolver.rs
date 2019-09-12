@@ -3,6 +3,7 @@ use futures::FutureExt;
 use http::Uri;
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::str::FromStr;
 use trust_dns_resolver;
 
 use std::net::IpAddr;
@@ -45,8 +46,11 @@ impl MatrixResolver {
         &self,
         uri: &Uri,
     ) -> Result<Vec<Endpoint>, failure::Error> {
-        let mut authority = uri.authority_part().expect("URI has no authority");
-        let mut host = uri.host().expect("URI has no host");
+        let mut authority = uri
+            .authority_part()
+            .expect("URI has no authority")
+            .to_string();
+        let mut host = uri.host().expect("URI has no host").to_string();
         let mut port = uri.port_u16();
 
         // If a literal IP or includes port then we shortcircuit.
@@ -60,21 +64,26 @@ impl MatrixResolver {
             }]);
         }
 
-        // TODO: Do lookup
-        if let Some(server) = get_well_known(&self.http_client, host).await {}
+        // Do well-known delegation lookup.
+        if let Some(server) = get_well_known(&self.http_client, &host).await {
+            let a = http::uri::Authority::from_str(&server.server)?;
+            host = a.host().to_string();
+            port = a.port_u16();
+            authority = a.to_string();
+        }
 
         // If a literal IP or includes port then we shortcircuit.
         if host.parse::<IpAddr>().is_ok() || port.is_some() {
             return Ok(vec![Endpoint {
-                host: host.to_string(),
+                host: host.clone(),
                 port: port.unwrap_or(8448),
 
                 host_header: authority.to_string(),
-                tls_name: host.to_string(),
+                tls_name: host.clone(),
             }]);
         }
 
-        let records = self.resolver.lookup_srv(host).compat().await?;
+        let records = self.resolver.lookup_srv(host.as_ref()).compat().await?;
 
         let mut priority_map: BTreeMap<u16, Vec<_>> = BTreeMap::new();
 
