@@ -94,11 +94,14 @@ pub trait EventStore: Clone + 'static {
 pub trait RoomStore: Clone + 'static {
     type Event: Event;
 
+    /// Insert non-rejected events that should be used for calculating forward
+    /// extremities.
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = Self::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 
+    /// Get the forward extremities for a room.
     fn get_forward_extremities(
         &self,
         room_id: String,

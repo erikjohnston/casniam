@@ -1,6 +1,6 @@
 use crate::protocol::{Event, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
-use crate::stores::EventStore;
+use crate::stores::{EventStore, RoomStore};
 
 use failure::Error;
 use futures::{future, Future, FutureExt};
@@ -14,6 +14,9 @@ use std::sync::{Arc, RwLock};
 pub struct MemoryEventStoreInner<R: RoomVersion> {
     event_map: BTreeMap<String, R::Event>,
     state_map: BTreeMap<String, StateMap<String>>,
+
+    forward_extremities: BTreeMap<String, BTreeSet<String>>,
+    backward_edges: BTreeMap<String, BTreeSet<String>>,
 }
 
 pub struct MemoryEventStore<R: RoomVersion>(
@@ -24,6 +27,8 @@ pub fn new_memory_store<R: RoomVersion>() -> MemoryEventStore<R> {
     MemoryEventStore(Arc::new(RwLock::new(MemoryEventStoreInner {
         event_map: BTreeMap::new(),
         state_map: BTreeMap::new(),
+        forward_extremities: BTreeMap::new(),
+        backward_edges: BTreeMap::new(),
     })))
 }
 
@@ -204,5 +209,68 @@ where
             .collect();
 
         future::ok(events).boxed_local()
+    }
+}
+
+impl<R> RoomStore for MemoryEventStore<R>
+where
+    R: RoomVersion + 'static,
+    R::Event: 'static,
+{
+    type Event = R::Event;
+
+    fn insert_events(
+        &self,
+        events: impl IntoIterator<Item = Self::Event>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+        let mut store = self.0.write().expect("Mutex poisoned");
+
+        for event in events {
+            let MemoryEventStoreInner {
+                ref mut forward_extremities,
+                ref mut backward_edges,
+                ..
+            } = &mut *store;
+
+            let extremities = forward_extremities
+                .entry(event.room_id().to_string())
+                .or_default();
+
+            for prev_id in event.prev_event_ids() {
+                backward_edges
+                    .entry(prev_id.to_string())
+                    .or_default()
+                    .insert(event.event_id().to_string());
+
+                // TODO: We want to inser the prev events' prev events here
+                // too, as we can't assume that they're there already there if
+                // it was rejected
+
+                extremities.remove(prev_id);
+            }
+
+            if !backward_edges.contains_key(event.event_id()) {
+                extremities.insert(event.event_id().to_string());
+            }
+
+            store.event_map.insert(event.event_id().to_string(), event);
+        }
+
+        future::ok(()).boxed()
+    }
+
+    fn get_forward_extremities(
+        &self,
+        room_id: String,
+    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>> {
+        let store = self.0.read().expect("Mutex poisoned");
+
+        let extrems = store
+            .forward_extremities
+            .get(&room_id)
+            .cloned()
+            .unwrap_or_default();
+
+        future::ok(extrems).boxed()
     }
 }
