@@ -101,6 +101,13 @@ pub trait RoomStore: Clone + 'static {
         events: impl IntoIterator<Item = Self::Event>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
 
+    fn insert_event(
+        &self,
+        event: Self::Event,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+        self.insert_events(iter::once(event))
+    }
+
     /// Get the forward extremities for a room.
     fn get_forward_extremities(
         &self,

@@ -242,7 +242,7 @@ where
                     .or_default()
                     .insert(event.event_id().to_string());
 
-                // TODO: We want to inser the prev events' prev events here
+                // TODO: We want to insert the prev events' prev events here
                 // too, as we can't assume that they're there already there if
                 // it was rejected
 

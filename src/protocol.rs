@@ -199,6 +199,7 @@ impl<ES: EventStore> Handler<ES> {
             if !unknown_events.is_empty() {
                 // TODO: Fetch missing events
                 // TODO: Fetch state for gaps
+                info!("Unknown events: {:?}", unknown_events);
                 unimplemented!();
             }
         }
@@ -273,10 +274,10 @@ pub struct PersistEventInfo<R: RoomVersion, S: RoomState> {
 
 #[derive(Debug, Default, Clone)]
 pub struct DagChunkFragment<E> {
-    event_ids: HashSet<String>,
-    events: Vec<E>,
-    backwards_extremities: HashSet<String>,
-    forward_extremities: HashSet<String>,
+    pub event_ids: HashSet<String>,
+    pub events: Vec<E>,
+    pub backwards_extremities: HashSet<String>,
+    pub forward_extremities: HashSet<String>,
 }
 
 impl<E> DagChunkFragment<E>
