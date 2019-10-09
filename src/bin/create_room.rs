@@ -222,8 +222,13 @@ impl AppData {
         for chunk in chunks {
             let room_id = chunk.events[0].room_id().to_string();
 
-            if database.get_forward_extremities(room_id).await?.is_empty() {
+            if database
+                .get_forward_extremities(room_id.clone())
+                .await?
+                .is_empty()
+            {
                 // Ignore events for rooms we're not in for now.
+                info!("Ignoring events for unknown room {}", &room_id);
                 continue;
             }
 
@@ -562,6 +567,8 @@ fn main() -> std::io::Result<()> {
         BTreeMap::new(),
     );
 
+    let databases = Arc::new(Mutex::new(anymap::Map::new()));
+
     HttpServer::new(move || {
         let federation_sender = {
             let mut ssl_builder =
@@ -591,7 +598,7 @@ fn main() -> std::io::Result<()> {
             key_id: key_id.clone(),
             secret_key: secret_key.clone(),
             federation_sender,
-            room_databases: Arc::new(Mutex::new(anymap::Map::new())),
+            room_databases: databases.clone(),
         };
 
         let key_server_servlet = key_server_servlet.clone();
