@@ -22,7 +22,7 @@ use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::{
-    DagChunkFragment, Event, Handler, PersistEventInfo, RoomVersion,
+    DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
     RoomVersion4,
 };
 use casniam::state_map::StateMap;
@@ -35,6 +35,47 @@ fn to_value(
         serde_json::Value::Object(value) => value,
         _ => panic!("Expected json map"),
     }
+}
+
+async fn generate_chunk<R: RoomVersion>(
+    room_id: String,
+    server_name: String,
+    key_id: String,
+    secret_key: sign::SecretKey,
+    builders: impl IntoIterator<Item = EventBuilder>,
+    database: memory::MemoryEventStore<R>,
+) -> Result<DagChunkFragment<R::Event>, Error> {
+    let mut chunk = DagChunkFragment::new();
+    let mut prev_events: Vec<_> = database
+        .get_forward_extremities(room_id)
+        .await?
+        .into_iter()
+        .collect();
+
+    let mut state = database.get_state_for(&prev_events).await?.unwrap();
+
+    for builder in builders {
+        let mut event = builder
+            .with_prev_events(prev_events)
+            .origin(server_name.clone())
+            .build::<R, _>(&database)
+            .await?;
+
+        prev_events = vec![event.event_id().to_string()];
+        if let Some(state_key) = event.state_key() {
+            state.add_event(
+                event.event_type().to_string(),
+                state_key.to_string(),
+                event.event_id().to_string(),
+            );
+        }
+
+        event.sign(server_name.clone(), key_id.clone(), &secret_key);
+
+        chunk.add_event(event).unwrap();
+    }
+
+    Ok(chunk)
 }
 
 async fn generate_room<R>(
