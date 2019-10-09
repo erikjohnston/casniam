@@ -98,6 +98,15 @@ where
     let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
         .timestamp_millis() as u64;
 
+    generate_chunk(
+        room_id.clone(),
+        server_name.clone(),
+        key_name.clone(),
+        secret_key.clone(),
+        database.clone(),
+    )
+    .await?;
+
     let builders = vec![
         EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
             .origin_server_ts(yesterday)
