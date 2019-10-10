@@ -2,7 +2,6 @@ use crate::json::signed::Signed;
 
 use crate::protocol::json::serialize_canonically_remove_fields;
 use crate::protocol::{AuthRules, Event, RoomState, RoomVersion};
-use crate::stores::EventStore;
 
 use base64;
 use failure::Error;
@@ -30,12 +29,10 @@ impl AsRef<EventV2> for SignedEventV3 {
 }
 
 impl SignedEventV3 {
-    pub async fn from_builder<
-        R: RoomVersion<Event = Self>,
-        E: EventStore<Event = Self>,
-    >(
+    pub async fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
         builder: super::EventBuilder,
-        event_store: E,
+        state: S,
+        prev_events: Vec<R::Event>,
     ) -> Result<Self, Error> {
         let auth_types = R::Auth::auth_types_for_event(
             &builder.event_type,
@@ -44,22 +41,10 @@ impl SignedEventV3 {
             &builder.content,
         );
 
-        // TODO: Only pull out a subset of the state needed.
-        let state = event_store
-            .get_state_for(&builder.prev_events)
-            .await?
-            .ok_or_else(|| {
-                format_err!(
-                    "No state for prev events: {:?}",
-                    &builder.prev_events
-                )
-            })?;
-
         let auth_events = state.get_event_ids(auth_types);
 
         let mut depth = 0;
-        let evs = event_store.get_events(&builder.prev_events).await?;
-        for ev in evs {
+        for ev in prev_events {
             depth = max(ev.depth(), depth);
         }
 
@@ -156,15 +141,12 @@ impl Event for SignedEventV3 {
         self.signed.as_ref().state_key()
     }
 
-    fn from_builder<
-        R: RoomVersion<Event = Self>,
-        E: EventStore<Event = Self>,
-    >(
+    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
         builder: super::EventBuilder,
-        event_store: &E,
+        state: S,
+        prev_events: Vec<R::Event>,
     ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
-        let event_store = event_store.clone();
-        Self::from_builder::<R, E>(builder, event_store).boxed_local()
+        Self::from_builder::<R, S>(builder, state, prev_events).boxed_local()
     }
 
     fn sign(

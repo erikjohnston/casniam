@@ -6,6 +6,7 @@ use failure::Error;
 use crate::protocol::{Event, RoomVersion};
 use crate::stores::EventStore;
 
+#[derive(Clone, Debug)]
 pub struct EventBuilder {
     event_type: String,
     state_key: Option<String>,
@@ -63,7 +64,18 @@ impl EventBuilder {
         self,
         event_store: &E,
     ) -> Result<R::Event, Error> {
-        let event = R::Event::from_builder::<R, E>(self, event_store).await?;
+        // TODO: Only pull out a subset of the state needed.
+        let state = event_store
+            .get_state_for(&self.prev_events)
+            .await?
+            .ok_or_else(|| {
+                format_err!("No state for prev events: {:?}", &self.prev_events)
+            })?;
+
+        let prev_events = event_store.get_events(&self.prev_events).await?;
+
+        let event =
+            R::Event::from_builder::<R, _>(self, state, prev_events).await?;
         Ok(event)
     }
 }

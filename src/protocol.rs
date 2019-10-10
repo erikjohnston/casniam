@@ -36,9 +36,10 @@ pub trait Event: Serialize + Sync + Send + Clone + fmt::Debug {
     fn sender(&self) -> &str;
     fn state_key(&self) -> Option<&str>;
 
-    fn from_builder<R: RoomVersion<Event = Self>, E: EventStore<Event = Self>>(
+    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
         builder: events::EventBuilder,
-        event_store: &E,
+        state: S,
+        prev_events: Vec<Self>,
     ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
 
     fn sign(
@@ -215,6 +216,8 @@ impl<ES: EventStore> Handler<ES> {
         let mut persisted_state = Vec::new();
         for event in chunk.events {
             let event_id = event.event_id().to_string();
+
+            // TODO: more events?
 
             let states = event
                 .prev_event_ids()

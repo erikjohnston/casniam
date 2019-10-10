@@ -42,26 +42,35 @@ async fn generate_chunk<R: RoomVersion>(
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    builders: impl IntoIterator<Item = EventBuilder>,
     database: memory::MemoryEventStore<R>,
+    builders: impl IntoIterator<Item = EventBuilder>,
 ) -> Result<DagChunkFragment<R::Event>, Error> {
     let mut chunk = DagChunkFragment::new();
-    let mut prev_events: Vec<_> = database
+    let mut prev_event_ids: Vec<_> = database
         .get_forward_extremities(room_id)
         .await?
         .into_iter()
         .collect();
 
-    let mut state = database.get_state_for(&prev_events).await?.unwrap();
+    let mut prev_events = database.get_events(&prev_event_ids).await?;
+
+    let mut state = database.get_state_for(&prev_event_ids).await?.unwrap();
 
     for builder in builders {
-        let mut event = builder
-            .with_prev_events(prev_events)
-            .origin(server_name.clone())
-            .build::<R, _>(&database)
-            .await?;
+        info!("Prev events for new chunk: {:?}", &prev_event_ids);
 
-        prev_events = vec![event.event_id().to_string()];
+        let mut event = R::Event::from_builder::<R, _>(
+            builder
+                .with_prev_events(prev_event_ids)
+                .origin(server_name.clone()),
+            state.clone(),
+            prev_events.clone(),
+        )
+        .await?;
+
+        event.sign(server_name.clone(), key_id.clone(), &secret_key);
+        chunk.add_event(event.clone()).unwrap();
+
         if let Some(state_key) = event.state_key() {
             state.add_event(
                 event.event_type().to_string(),
@@ -70,9 +79,8 @@ async fn generate_chunk<R: RoomVersion>(
             );
         }
 
-        event.sign(server_name.clone(), key_id.clone(), &secret_key);
-
-        chunk.add_event(event).unwrap();
+        prev_event_ids = vec![event.event_id().to_string()];
+        prev_events = vec![event];
     }
 
     Ok(chunk)
@@ -93,19 +101,8 @@ where
 
     let handler = Handler::new(database.clone());
 
-    let mut chunk = DagChunkFragment::new();
-
     let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
         .timestamp_millis() as u64;
-
-    generate_chunk(
-        room_id.clone(),
-        server_name.clone(),
-        key_name.clone(),
-        secret_key.clone(),
-        database.clone(),
-    )
-    .await?;
 
     let builders = vec![
         EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
@@ -153,32 +150,28 @@ where
         }))),
     ];
 
-    for builder in builders {
-        let prev_events: Vec<_> =
-            chunk.forward_extremities().iter().cloned().collect();
-
-        // TODO: Add a nice way of getting the state from the chunk
-        let state = database.get_state_for(&prev_events).await?.unwrap();
-
-        let mut event = builder
-            .with_prev_events(prev_events)
-            .origin(server_name.clone())
-            .build::<R, _>(&database)
-            .await?;
-
-        event.sign(server_name.clone(), key_name.clone(), &secret_key);
-
-        // TODO: Do we need to clone?
-        EventStore::insert_event(&database, event.clone(), state.clone())
-            .await?;
-        chunk.add_event(event).unwrap();
-    }
+    let chunk = generate_chunk(
+        room_id.clone(),
+        server_name.clone(),
+        key_name.clone(),
+        secret_key.clone(),
+        database.clone(),
+        builders.clone(),
+    )
+    .await?;
 
     let stuff = handler.handle_chunk::<R>(chunk).await?;
 
     for info in &stuff {
         assert!(!info.rejected);
     }
+
+    EventStore::insert_events(
+        &database,
+        stuff
+            .iter()
+            .map(|info| (info.event.clone(), info.state_before.clone())),
+    );
 
     // TODO: Do we need to clone?
     RoomStore::insert_events(
