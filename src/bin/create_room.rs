@@ -42,7 +42,7 @@ async fn generate_chunk<R: RoomVersion>(
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R>,
+    database: memory::MemoryEventStore<R, StateMap<String>>,
     builders: impl IntoIterator<Item = EventBuilder>,
 ) -> Result<DagChunkFragment<R::Event>, Error> {
     let mut chunk = DagChunkFragment::new();
@@ -91,7 +91,7 @@ async fn generate_room<R>(
     server_name: String,
     key_name: String,
     secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R>,
+    database: memory::MemoryEventStore<R, StateMap<String>>,
 ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
 where
     R: RoomVersion,
@@ -160,25 +160,22 @@ where
     )
     .await?;
 
-    let stuff = handler.handle_chunk::<R>(chunk).await?;
+    let stuff = handler.handle_chunk(chunk).await?;
 
     for info in &stuff {
         assert!(!info.rejected);
     }
 
-    EventStore::insert_events(
-        &database,
+    database.insert_events(
         stuff
             .iter()
             .map(|info| (info.event.clone(), info.state_before.clone())),
     );
 
     // TODO: Do we need to clone?
-    RoomStore::insert_events(
-        &database,
-        stuff.iter().map(|info| info.event.clone()),
-    )
-    .await?;
+    database
+        .insert_new_events(stuff.iter().map(|info| info.event.clone()))
+        .await?;
 
     Ok(stuff)
 }
@@ -187,7 +184,7 @@ async fn render_room<R>(
     server_name: String,
     key_name: String,
     secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R>,
+    database: memory::MemoryEventStore<R, StateMap<String>>,
 ) -> Result<HttpResponse, Error>
 where
     R: RoomVersion,
@@ -211,11 +208,11 @@ where
     )
     .await?;
 
-    let extrems: Vec<_> =
-        RoomStore::get_forward_extremities(&database, room_id)
-            .await?
-            .into_iter()
-            .collect();
+    let extrems: Vec<_> = database
+        .get_forward_extremities(room_id)
+        .await?
+        .into_iter()
+        .collect();
     let state = database.get_state_for(&extrems).await?.unwrap();
 
     Ok(HttpResponse::Ok().json(json!({
@@ -242,7 +239,9 @@ struct AppData {
 }
 
 impl AppData {
-    fn get_database<R: RoomVersion>(&self) -> memory::MemoryEventStore<R> {
+    fn get_database<R: RoomVersion>(
+        &self,
+    ) -> memory::MemoryEventStore<R, StateMap<String>> {
         let mut map = self.room_databases.lock().unwrap();
         map.entry().or_insert_with(memory::new_memory_store).clone()
     }
@@ -275,33 +274,27 @@ impl AppData {
                 continue;
             }
 
-            let stuff = handler.handle_chunk::<R>(chunk).await?;
+            let stuff = handler.handle_chunk(chunk).await?;
 
-            EventStore::insert_events(
-                &database,
-                stuff.iter().map(|info| {
+            database
+                .insert_events(stuff.iter().map(|info| {
                     (info.event.clone(), info.state_before.clone())
-                }),
-            )
-            .await?;
+                }))
+                .await?;
 
-            RoomStore::insert_events(
-                &database,
-                stuff.iter().map(|i| i.event.clone()),
-            )
-            .await?;
+            database
+                .insert_new_events(stuff.iter().map(|i| i.event.clone()))
+                .await?;
 
             for info in stuff {
                 if info.event.event_type() == "m.room.message" {
                     let room_id = info.event.room_id().to_string();
 
-                    let extrems: Vec<_> = RoomStore::get_forward_extremities(
-                        &database,
-                        room_id.clone(),
-                    )
-                    .await?
-                    .into_iter()
-                    .collect();
+                    let extrems: Vec<_> = database
+                        .get_forward_extremities(room_id.clone())
+                        .await?
+                        .into_iter()
+                        .collect();
 
                     let creator = format!("@alice:{}", self.server_name);
                     let event_origin = info
@@ -337,14 +330,9 @@ impl AppData {
                         &self.secret_key,
                     );
 
-                    EventStore::insert_event(
-                        &database,
-                        event.clone(),
-                        state.clone(),
-                    )
-                    .await?;
+                    database.insert_event(event.clone(), state.clone()).await?;
 
-                    RoomStore::insert_event(&database, event.clone()).await?;
+                    database.insert_new_event(event.clone()).await?;
 
                     info!("Sending echo event to {}", event_origin);
 
@@ -447,7 +435,7 @@ impl AppData {
 
         let chunk = DagChunkFragment::from_event(event.clone());
         let handler = Handler::new(database.clone());
-        let mut stuff = handler.handle_chunk::<R>(chunk).await?;
+        let mut stuff = handler.handle_chunk(chunk).await?;
 
         for info in &mut stuff {
             assert!(!info.rejected);
@@ -458,14 +446,11 @@ impl AppData {
                 &self.secret_key,
             );
 
-            EventStore::insert_event(
-                &database,
-                info.event.clone(),
-                info.state_before.clone(),
-            )
-            .await?;
+            database
+                .insert_event(info.event.clone(), info.state_before.clone())
+                .await?;
 
-            RoomStore::insert_event(&database, info.event.clone()).await?;
+            database.insert_new_event(info.event.clone()).await?;
         }
 
         let state = database.get_state_for(&[&event_id]).await?.unwrap();
@@ -508,14 +493,12 @@ impl AppData {
 
             event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);
 
-            EventStore::insert_event(
-                &database,
+            database.insert_event(
                 event.clone(),
                 state.clone(),
             ).await?;
 
-            RoomStore::insert_event(
-                &database,
+            database.insert_new_event(
                 event.clone(),
             ).await?;
 
@@ -549,14 +532,12 @@ impl AppData {
 
             event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);
 
-            EventStore::insert_event(
-                &database,
+            database.insert_event(
                 event.clone(),
                 state.clone(),
             ).await?;
 
-            RoomStore::insert_event(
-                &database,
+            database.insert_new_event(
                 event.clone(),
             ).await?;
 

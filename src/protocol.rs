@@ -1,3 +1,4 @@
+use crate::stores::backed::BackedStore;
 use crate::stores::EventStore;
 
 use futures::future::Future;
@@ -11,6 +12,7 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Debug;
+use std::iter::FromIterator;
 use std::pin::Pin;
 
 use failure::Error;
@@ -77,7 +79,13 @@ pub trait RoomStateResolver {
     ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
 }
 
-pub trait RoomState: Clone + Debug + 'static {
+pub trait RoomState:
+    IntoIterator<Item = ((String, String), String)>
+    + FromIterator<((String, String), String)>
+    + Clone
+    + Debug
+    + 'static
+{
     fn new() -> Self;
 
     fn add_event(&mut self, etype: String, state_key: String, event_id: String);
@@ -115,7 +123,7 @@ pub trait AuthRules {
     ) -> Vec<(String, String)>;
 }
 
-pub trait RoomVersion: 'static {
+pub trait RoomVersion: Clone + 'static {
     type Event: Event;
     type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
@@ -181,10 +189,11 @@ impl<ES: EventStore> Handler<ES> {
         Handler { event_store }
     }
 
-    pub async fn handle_chunk<V: RoomVersion<Event = ES::Event> + 'static>(
+    pub async fn handle_chunk(
         &self,
-        chunk: DagChunkFragment<V::Event>,
-    ) -> Result<Vec<PersistEventInfo<V, ES::RoomState>>, Error> {
+        chunk: DagChunkFragment<ES::Event>,
+    ) -> Result<Vec<PersistEventInfo<ES::RoomVersion, ES::RoomState>>, Error>
+    {
         // TODO: This doesn't check signatures/hashes or whether it passes auth
         // checks based on auth events. Nor does it check for soft failures.
         // Former should be checked before we enter here, the latter after.
@@ -213,11 +222,11 @@ impl<ES: EventStore> Handler<ES> {
             event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
 
+        let store = BackedStore::new(self.event_store.clone());
+
         let mut persisted_state = Vec::new();
         for event in chunk.events {
             let event_id = event.event_id().to_string();
-
-            // TODO: more events?
 
             let states = event
                 .prev_event_ids()
@@ -226,23 +235,30 @@ impl<ES: EventStore> Handler<ES> {
                 .collect();
 
             let state_before: ES::RoomState =
-                V::State::resolve_state(states, &self.event_store).await?;
+                <<ES as EventStore>::RoomVersion as RoomVersion>::State::resolve_state(states, &store).await?;
 
             // FIXME: Differentiate between DB and auth errors.
-            let rejected =
-                match V::Auth::check(&event, &state_before, &self.event_store)
-                    .await
-                {
-                    Ok(()) => false,
-                    Err(err) => {
-                        info!(
-                            "Denied event {} because: {}",
-                            event.event_type(),
-                            err
-                        );
-                        true
-                    }
-                };
+            // TODO: Need to pass previous events to auth check
+            let rejected = match <<ES as EventStore>::RoomVersion as RoomVersion>::Auth::check(
+                &event,
+                &state_before,
+                &store,
+            )
+            .await
+            {
+                Ok(()) => {
+                    info!("Allowed {}", event.event_id());
+                    false
+                }
+                Err(err) => {
+                    info!(
+                        "Denied event {} because: {}",
+                        event.event_type(),
+                        err
+                    );
+                    true
+                }
+            };
 
             let mut state_after = state_before.clone();
             if !rejected {
@@ -254,6 +270,10 @@ impl<ES: EventStore> Handler<ES> {
                     );
                 }
             }
+
+            store
+                .insert_event(event.clone(), state_before.clone())
+                .await?;
 
             persisted_state.push(PersistEventInfo {
                 event,

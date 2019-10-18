@@ -257,6 +257,42 @@ where
             .chain(others)
     }
 
+    pub fn into_iter(self) -> impl Iterator<Item = ((String, String), E)> {
+        let StateMap {
+            well_known,
+            membership,
+            aliases,
+            invites,
+            others,
+        } = self;
+
+        let well_known = well_known
+            .into_iter()
+            .map(|(k, e)| ((k.as_str().to_string(), "".to_string()), e));
+
+        let members = membership
+            .into_iter()
+            .map(|(u, e)| ((TYPE_MEMBERSHIP.to_string(), u), e));
+
+        let aliases = aliases
+            .into_iter()
+            .map(|(s, e)| ((TYPE_ALIASES.to_string(), s), e));
+
+        let invites = invites
+            .into_iter()
+            .map(|(t, e)| ((TYPE_THIRD_PARTY_INVITE.to_string(), t), e));
+
+        let others = others.into_iter().flat_map(|(t, h)| {
+            h.into_iter().map(move |(s, e)| ((t.clone(), s), e))
+        });
+
+        well_known
+            .chain(members)
+            .chain(aliases)
+            .chain(invites)
+            .chain(others)
+    }
+
     pub fn values(&self) -> impl Iterator<Item = &E> {
         let well_known = self.well_known.values();
 
@@ -494,6 +530,18 @@ where
         for ((t, s), e) in iter {
             self.insert(t, s, e);
         }
+    }
+}
+
+impl<E> IntoIterator for StateMap<E>
+where
+    E: Debug + Clone + 'static,
+{
+    type Item = ((String, String), E);
+    type IntoIter = Box<dyn Iterator<Item = Self::Item>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.into_iter())
     }
 }
 
