@@ -203,7 +203,10 @@ mod tests {
         let b64 = Base64Signature(sig);
         let serialized = serde_json::to_string(&b64).unwrap();
 
-        assert_eq!(serialized, r#""X2t7jN0jaJsiZWp57da9GqmQ874QFbukCMSqc5VclaB+2n4i8LPcZDkD6+fzg4tkfpSsiIDogkY4HWv1cnGhAg""#);
+        assert_eq!(
+            serialized,
+            r#""X2t7jN0jaJsiZWp57da9GqmQ874QFbukCMSqc5VclaB+2n4i8LPcZDkD6+fzg4tkfpSsiIDogkY4HWv1cnGhAg""#
+        );
     }
 
     #[test]

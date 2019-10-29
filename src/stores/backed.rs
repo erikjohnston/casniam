@@ -94,10 +94,8 @@ impl<S: EventStore> EventStore for BackedStore<S> {
     {
         let store = self.clone();
 
-        let event_ids: Vec<_> = event_ids
-            .into_iter()
-            .map(|e| e.as_ref().to_string())
-            .collect();
+        let event_ids: Vec<_> =
+            event_ids.iter().map(|e| e.as_ref().to_string()).collect();
 
         async move {
             let mut states = Vec::with_capacity(event_ids.len());
@@ -107,10 +105,12 @@ impl<S: EventStore> EventStore for BackedStore<S> {
                 {
                     states.push(s.into_iter().collect());
                 }
-                if let Some(s) = store.store.get_state_for(&[event_id]).await? {
+                else if let Some(s) = store.store.get_state_for(&[event_id]).await? {
                     states.push(s);
+                } else {
+                    // We couldn't find one of the event IDs, so we bail.
+                    return Ok(None);
                 }
-                return Ok(None);
             }
 
             let state =

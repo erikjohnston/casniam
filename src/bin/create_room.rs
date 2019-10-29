@@ -37,190 +37,6 @@ fn to_value(
     }
 }
 
-async fn generate_chunk<R: RoomVersion>(
-    room_id: String,
-    server_name: String,
-    key_id: String,
-    secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R, StateMap<String>>,
-    builders: impl IntoIterator<Item = EventBuilder>,
-) -> Result<DagChunkFragment<R::Event>, Error> {
-    let mut chunk = DagChunkFragment::new();
-    let mut prev_event_ids: Vec<_> = database
-        .get_forward_extremities(room_id)
-        .await?
-        .into_iter()
-        .collect();
-
-    let mut prev_events = database.get_events(&prev_event_ids).await?;
-
-    let mut state = database.get_state_for(&prev_event_ids).await?.unwrap();
-
-    for builder in builders {
-        info!("Prev events for new chunk: {:?}", &prev_event_ids);
-
-        let mut event = R::Event::from_builder::<R, _>(
-            builder
-                .with_prev_events(prev_event_ids)
-                .origin(server_name.clone()),
-            state.clone(),
-            prev_events.clone(),
-        )
-        .await?;
-
-        event.sign(server_name.clone(), key_id.clone(), &secret_key);
-        chunk.add_event(event.clone()).unwrap();
-
-        if let Some(state_key) = event.state_key() {
-            state.add_event(
-                event.event_type().to_string(),
-                state_key.to_string(),
-                event.event_id().to_string(),
-            );
-        }
-
-        prev_event_ids = vec![event.event_id().to_string()];
-        prev_events = vec![event];
-    }
-
-    Ok(chunk)
-}
-
-async fn generate_room<R>(
-    room_id: String,
-    server_name: String,
-    key_name: String,
-    secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R, StateMap<String>>,
-) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
-where
-    R: RoomVersion,
-    R::Event: Serialize,
-{
-    let creator = format!("@alice:{}", server_name);
-
-    let handler = Handler::new(database.clone());
-
-    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
-        .timestamp_millis() as u64;
-
-    let builders = vec![
-        EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "room_version": R::VERSION,
-                "creator": creator,
-            }))),
-        EventBuilder::new(&room_id, &creator, "m.room.member", Some(&creator))
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "membership": "join",
-                "displayname": "Alice",
-            }))),
-        EventBuilder::new(&room_id, &creator, "m.room.power_levels", Some(""))
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "users": {
-                    &creator: 100,
-                },
-                "users_default": 100,
-                "events": {},
-                "events_default": 0,
-                "state_default": 50,
-                "ban": 50,
-                "kick": 50,
-                "redact": 50,
-                "invite": 0
-            }))),
-        EventBuilder::new(&room_id, &creator, "m.room.join_rules", Some(""))
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "join_rule": "public",
-            }))),
-        EventBuilder::new(
-            &room_id,
-            &creator,
-            "m.room.message",
-            None as Option<String>,
-        )
-        .origin_server_ts(yesterday)
-        .with_content(to_value(json!({
-            "msgtype": "m.text",
-            "body": "Are you there?",
-        }))),
-    ];
-
-    let chunk = generate_chunk(
-        room_id.clone(),
-        server_name.clone(),
-        key_name.clone(),
-        secret_key.clone(),
-        database.clone(),
-        builders.clone(),
-    )
-    .await?;
-
-    let stuff = handler.handle_chunk(chunk).await?;
-
-    for info in &stuff {
-        assert!(!info.rejected);
-    }
-
-    database.insert_events(
-        stuff
-            .iter()
-            .map(|info| (info.event.clone(), info.state_before.clone())),
-    );
-
-    // TODO: Do we need to clone?
-    database
-        .insert_new_events(stuff.iter().map(|info| info.event.clone()))
-        .await?;
-
-    Ok(stuff)
-}
-
-async fn render_room<R>(
-    server_name: String,
-    key_name: String,
-    secret_key: sign::SecretKey,
-    database: memory::MemoryEventStore<R, StateMap<String>>,
-) -> Result<HttpResponse, Error>
-where
-    R: RoomVersion,
-    R::Event: Serialize,
-{
-    let room_id = format!(
-        "!{}:{}",
-        thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>(),
-        server_name,
-    );
-
-    let stuff = generate_room(
-        room_id.clone(),
-        server_name,
-        key_name,
-        secret_key,
-        database.clone(),
-    )
-    .await?;
-
-    let extrems: Vec<_> = database
-        .get_forward_extremities(room_id)
-        .await?
-        .into_iter()
-        .collect();
-    let state = database.get_state_for(&extrems).await?.unwrap();
-
-    Ok(HttpResponse::Ok().json(json!({
-        "events": stuff.into_iter().map(|p| p.event).collect::<Vec<_>>(),
-        "state": state.values().cloned().collect::<Vec<_>>(),
-    })))
-}
-
 #[derive(Serialize, Deserialize)]
 struct Transaction<R: RoomVersion>
 where
@@ -257,8 +73,7 @@ impl AppData {
     {
         let database = self.get_database::<R>();
 
-        let chunks =
-            DagChunkFragment::from_events(txn.pdus.iter().cloned().collect());
+        let chunks = DagChunkFragment::from_events(txn.pdus.to_vec());
         let handler = Handler::new(database.clone());
 
         for chunk in chunks {
@@ -378,14 +193,7 @@ impl AppData {
     {
         let database = self.get_database::<R>();
 
-        let stuff = generate_room(
-            room_id.clone(),
-            self.server_name.clone(),
-            self.key_id.clone(),
-            self.secret_key.clone(),
-            database.clone(),
-        )
-        .await?;
+        let stuff = self.clone().generate_room::<R>(room_id.clone()).await?;
 
         let last_event_id = stuff.last().unwrap().event.event_id().to_string();
 
@@ -480,6 +288,8 @@ impl AppData {
                 "body": "Hello! I don't actually have anything to say to you right now...",
             })));
 
+            //let chunk = self.clone().generate_chunk::<R>(room_id.clone(), [builder]).await?;
+
             let prev_events: Vec<_> = database.get_forward_extremities(room_id.clone()).await?.into_iter().collect();
 
             let state =
@@ -552,6 +362,177 @@ impl AppData {
         Arbiter::spawn(send_fut.map_err(|_: Error| ()).compat());
 
         Ok(resp)
+    }
+
+    /// Create a new chunk from a set of builders. Doesn't persist.
+    async fn generate_chunk<
+        R: RoomVersion,
+        B: IntoIterator<Item = EventBuilder>,
+    >(
+        self,
+        room_id: String,
+        builders: B,
+    ) -> Result<DagChunkFragment<R::Event>, Error> {
+        let database = self.get_database::<R>();
+
+        let mut chunk = DagChunkFragment::new();
+        let mut prev_event_ids: Vec<_> = database
+            .get_forward_extremities(room_id)
+            .await?
+            .into_iter()
+            .collect();
+
+        let mut prev_events = database.get_events(&prev_event_ids).await?;
+
+        let mut state = database.get_state_for(&prev_event_ids).await?.unwrap();
+
+        for builder in builders {
+            info!("Prev events for new chunk: {:?}", &prev_event_ids);
+
+            let mut event = R::Event::from_builder::<R, _>(
+                builder
+                    .with_prev_events(prev_event_ids)
+                    .origin(self.server_name.clone()),
+                state.clone(),
+                prev_events.clone(),
+            )
+            .await?;
+
+            event.sign(
+                self.server_name.clone(),
+                self.key_id.clone(),
+                &self.secret_key,
+            );
+            chunk.add_event(event.clone()).unwrap();
+
+            if let Some(state_key) = event.state_key() {
+                state.add_event(
+                    event.event_type().to_string(),
+                    state_key.to_string(),
+                    event.event_id().to_string(),
+                );
+            }
+
+            prev_event_ids = vec![event.event_id().to_string()];
+            prev_events = vec![event];
+        }
+
+        Ok(chunk)
+    }
+
+    async fn handle_chunk<R>(
+        self,
+        chunk: DagChunkFragment<R::Event>,
+    ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
+    where
+        R: RoomVersion,
+        R::Event: Serialize,
+    {
+        let database = self.get_database::<R>();
+
+        let handler = Handler::new(database.clone());
+        let stuff = handler.handle_chunk(chunk).await?;
+
+        for info in &stuff {
+            assert!(!info.rejected);
+        }
+
+        database.insert_events(
+            stuff
+                .iter()
+                .map(|info| (info.event.clone(), info.state_before.clone())),
+        );
+
+        // TODO: Do we need to clone?
+        database
+            .insert_new_events(stuff.iter().map(|info| info.event.clone()))
+            .await?;
+
+        Ok(stuff)
+    }
+
+    async fn generate_room<R>(
+        self,
+        room_id: String,
+    ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
+    where
+        R: RoomVersion,
+        R::Event: Serialize,
+    {
+        let creator = format!("@alice:{}", &self.server_name);
+
+        let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
+            .timestamp_millis() as u64;
+
+        let builders = vec![
+            EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
+                .origin_server_ts(yesterday)
+                .with_content(to_value(json!({
+                    "room_version": R::VERSION,
+                    "creator": creator,
+                }))),
+            EventBuilder::new(
+                &room_id,
+                &creator,
+                "m.room.member",
+                Some(&creator),
+            )
+            .origin_server_ts(yesterday)
+            .with_content(to_value(json!({
+                "membership": "join",
+                "displayname": "Alice",
+            }))),
+            EventBuilder::new(
+                &room_id,
+                &creator,
+                "m.room.power_levels",
+                Some(""),
+            )
+            .origin_server_ts(yesterday)
+            .with_content(to_value(json!({
+                "users": {
+                    &creator: 100,
+                },
+                "users_default": 100,
+                "events": {},
+                "events_default": 0,
+                "state_default": 50,
+                "ban": 50,
+                "kick": 50,
+                "redact": 50,
+                "invite": 0
+            }))),
+            EventBuilder::new(
+                &room_id,
+                &creator,
+                "m.room.join_rules",
+                Some(""),
+            )
+            .origin_server_ts(yesterday)
+            .with_content(to_value(json!({
+                "join_rule": "public",
+            }))),
+            EventBuilder::new(
+                &room_id,
+                &creator,
+                "m.room.message",
+                None as Option<String>,
+            )
+            .origin_server_ts(yesterday)
+            .with_content(to_value(json!({
+                "msgtype": "m.text",
+                "body": "Are you there?",
+            }))),
+        ];
+
+        let chunk = self
+            .clone()
+            .generate_chunk::<R, _>(room_id, builders)
+            .await?;
+
+        let stuff = self.clone().handle_chunk::<R>(chunk).await?;
+
+        Ok(stuff)
     }
 }
 
@@ -628,23 +609,12 @@ fn main() -> std::io::Result<()> {
         let key_server_servlet = key_server_servlet.clone();
 
         App::new()
-            .data(app_data.clone())
+            .data(app_data)
             .wrap(actix_web::middleware::Logger::default())
             .service(
                 web::resource("/_matrix/key/v2/server*")
                     .route(web::get().to(move || key_server_servlet.render())),
             )
-            .service(web::resource("/create_room").route(web::get().to_async(
-                move |app_data: web::Data<AppData>| {
-                    render_room(
-                        app_data.server_name.clone(),
-                        app_data.key_id.clone(),
-                        app_data.secret_key.clone(),
-                        app_data.get_database::<RoomVersion4>(), // FIXME
-                    )
-                    .boxed_local().compat()
-                },
-            )))
             .service(
                 web::resource(
                     "/_matrix/federation/v1/make_join/{room_id}/{user_id}",

@@ -77,7 +77,7 @@ impl TransactionSender for MemoryTransactionSender {
 
             Ok(())
         }
-            .boxed_local()
+        .boxed_local()
     }
 }
 

@@ -67,7 +67,7 @@ where
             .await?;
             Ok(resolved)
         }
-            .boxed_local()
+        .boxed_local()
     }
 }
 
@@ -477,7 +477,7 @@ mod tests {
 
     use crate::protocol::events::EventBuilder;
     use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion3};
-
+    use crate::state_map::StateMap;
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
 
     use futures::executor::block_on;
@@ -485,7 +485,7 @@ mod tests {
     use std::iter::once;
 
     fn create_event(
-        store: &MemoryEventStore<RoomVersion3>,
+        store: &MemoryEventStore<RoomVersion3, StateMap<String>>,
         event_type: &str,
         state_key: Option<&str>,
         sender: &str,
@@ -513,14 +513,14 @@ mod tests {
 
         let event_id = event.event_id().to_string();
 
-        block_on(store.insert_events(once((event, state.clone())))).unwrap();
+        block_on(store.insert_events(once((event, state)))).unwrap();
 
         event_id
     }
 
     #[test]
     fn test_get_conflicted_events() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let create = create_event(
             &store,
@@ -540,7 +540,7 @@ mod tests {
 
     #[test]
     fn resolve_single() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let create = create_event(
             &store,
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn join_rule_evasion() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -587,7 +587,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -600,7 +600,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -611,7 +611,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -633,7 +633,7 @@ mod tests {
             Some(json!({
                 "join_rule": "private",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let final_state =
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn ban_vs_pl() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -666,7 +666,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -679,7 +679,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -690,7 +690,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -701,7 +701,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let pa = create_event(
@@ -715,7 +715,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![imb.clone()],
+            vec![imb],
         );
 
         let ma = create_event(
@@ -737,7 +737,7 @@ mod tests {
             Some(json!({
                 "membership": "ban",
             })),
-            vec![ma.clone()],
+            vec![ma],
         );
 
         let pb = create_event(
@@ -754,10 +754,9 @@ mod tests {
             vec![pa.clone()],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[mb.clone(), pb.clone()]))
-                .unwrap()
-                .unwrap();
+        let final_state = block_on(store.get_state_for(&[mb.clone(), pb]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -773,7 +772,7 @@ mod tests {
 
     #[test]
     fn offtopic_pl() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -796,7 +795,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -809,7 +808,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -820,7 +819,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -831,7 +830,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let imc = create_event(
@@ -842,7 +841,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![imb.clone()],
+            vec![imb],
         );
 
         let pa = create_event(
@@ -856,7 +855,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![imc.clone()],
+            vec![imc],
         );
 
         let pb = create_event(
@@ -871,7 +870,7 @@ mod tests {
                     charlie: 50,
                 },
             })),
-            vec![pa.clone()],
+            vec![pa],
         );
 
         let pc = create_event(
@@ -890,7 +889,7 @@ mod tests {
         );
 
         let final_state =
-            block_on(store.get_state_for(&[pb.clone(), pc.clone()]))
+            block_on(store.get_state_for(&[pb, pc.clone()]))
                 .unwrap()
                 .unwrap();
 
@@ -903,7 +902,7 @@ mod tests {
 
     #[test]
     fn topic_basic() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -925,7 +924,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -938,7 +937,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -949,7 +948,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -960,7 +959,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let t1 = create_event(
@@ -969,7 +968,7 @@ mod tests {
             Some(""),
             alice,
             None,
-            vec![imb.clone()],
+            vec![imb],
         );
 
         let pa1 = create_event(
@@ -983,7 +982,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![t1.clone()],
+            vec![t1],
         );
 
         let t2 = create_event(
@@ -1020,7 +1019,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![pa1.clone()],
+            vec![pa1],
         );
 
         let t3 = create_event(
@@ -1029,11 +1028,11 @@ mod tests {
             Some(""),
             bob,
             None,
-            vec![pb.clone()],
+            vec![pb],
         );
 
         let final_state =
-            block_on(store.get_state_for(&[pa2.clone(), t3.clone()]))
+            block_on(store.get_state_for(&[pa2.clone(), t3]))
                 .unwrap()
                 .unwrap();
 
@@ -1052,7 +1051,7 @@ mod tests {
 
     #[test]
     fn topic_reset() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -1074,7 +1073,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -1087,7 +1086,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -1098,7 +1097,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -1109,7 +1108,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let t1 = create_event(
@@ -1118,7 +1117,7 @@ mod tests {
             Some(""),
             alice,
             None,
-            vec![imb.clone()],
+            vec![imb],
         );
 
         let pa = create_event(
@@ -1152,7 +1151,7 @@ mod tests {
             Some(json!({
                 "membership": "ban",
             })),
-            vec![t2.clone()],
+            vec![t2],
         );
 
         let final_state =
@@ -1181,7 +1180,7 @@ mod tests {
 
     #[test]
     fn topic() {
-        let store: MemoryEventStore<RoomVersion3> = new_memory_store();
+        let store: MemoryEventStore<RoomVersion3, _> = new_memory_store();
 
         let alice = "@alice:test";
         let bob = "@bob:test";
@@ -1203,7 +1202,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![create.clone()],
+            vec![create],
         );
 
         let ipower = create_event(
@@ -1216,7 +1215,7 @@ mod tests {
                     alice: 100,
                 },
             })),
-            vec![ima.clone()],
+            vec![ima],
         );
 
         let ijr = create_event(
@@ -1227,7 +1226,7 @@ mod tests {
             Some(json!({
                 "join_rule": "public",
             })),
-            vec![ipower.clone()],
+            vec![ipower],
         );
 
         let imb = create_event(
@@ -1238,7 +1237,7 @@ mod tests {
             Some(json!({
                 "membership": "join",
             })),
-            vec![ijr.clone()],
+            vec![ijr],
         );
 
         let t1 = create_event(
@@ -1247,7 +1246,7 @@ mod tests {
             Some(""),
             alice,
             None,
-            vec![imb.clone()],
+            vec![imb],
         );
 
         let pa1 = create_event(
@@ -1261,7 +1260,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![t1.clone()],
+            vec![t1],
         );
 
         let t2 = create_event(
@@ -1284,7 +1283,7 @@ mod tests {
                     bob: 0,
                 },
             })),
-            vec![t2.clone()],
+            vec![t2],
         );
 
         let pb = create_event(
@@ -1298,7 +1297,7 @@ mod tests {
                     bob: 50,
                 },
             })),
-            vec![pa1.clone()],
+            vec![pa1],
         );
 
         let t3 = create_event(
@@ -1307,7 +1306,7 @@ mod tests {
             Some(""),
             bob,
             None,
-            vec![pb.clone()],
+            vec![pb],
         );
 
         let msg = create_event(
@@ -1316,7 +1315,7 @@ mod tests {
             None,
             alice,
             None,
-            vec![pa2.clone(), t3.clone()],
+            vec![pa2.clone(), t3],
         );
 
         let t4 = create_event(
@@ -1329,7 +1328,7 @@ mod tests {
         );
 
         let final_state =
-            block_on(store.get_state_for(&[msg.clone(), t4.clone()]))
+            block_on(store.get_state_for(&[msg, t4.clone()]))
                 .unwrap()
                 .unwrap();
 

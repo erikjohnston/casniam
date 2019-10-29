@@ -342,7 +342,7 @@ where
             backwards_extremities: event
                 .prevs()
                 .iter()
-                .map(|e| e.to_string())
+                .map(|&e| e.to_string())
                 .collect(),
             forward_extremities: vec![event.id().to_string()]
                 .into_iter()
@@ -354,7 +354,7 @@ where
 
     pub fn add_event(&mut self, event: E) -> Result<(), E> {
         let backwards: Vec<_> =
-            event.prevs().iter().map(|e| e.to_string()).collect();
+            event.prevs().iter().map(|&e| e.to_string()).collect();
 
         if backwards.iter().all(|e| self.event_ids.contains(e)) {
             for e in &backwards {
@@ -388,7 +388,7 @@ fn topological_sort(events: &mut Vec<impl DagNode>) -> HashSet<String> {
             events.iter().map(|e| (e.id().to_string(), e)).collect();
 
         for event in event_map.values() {
-            for prev_event_id in &event.prevs() {
+            for &prev_event_id in &event.prevs() {
                 if event_map.contains_key(prev_event_id as &str) {
                     graph.add_edge(event.id(), prev_event_id, 0);
                 } else {
@@ -423,7 +423,7 @@ fn get_missing<'a>(
         .collect();
 
     for event in event_map.values() {
-        for prev_event_id in &event.prev_event_ids() {
+        for &prev_event_id in &event.prev_event_ids() {
             if !event_map.contains_key(prev_event_id as &str) {
                 missing.insert(prev_event_id.to_string());
             }
@@ -494,12 +494,10 @@ mod tests {
             unimplemented!()
         }
 
-        fn from_builder<
-            R: RoomVersion<Event = Self>,
-            E: EventStore<Event = Self>,
-        >(
+        fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
             _builder: events::EventBuilder,
-            _event_store: &E,
+            _state: S,
+            _prev_events: Vec<Self>,
         ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
             unimplemented!()
         }
@@ -645,6 +643,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
     struct DummyVersion;
 
     impl RoomVersion for DummyVersion {
@@ -739,7 +738,7 @@ mod tests {
 
         let mut chunks = DagChunkFragment::from_events(events);
 
-        let fut = handler.handle_chunk::<DummyVersion>(chunks.pop().unwrap());
+        let fut = handler.handle_chunk(chunks.pop().unwrap());
 
         let results = block_on(fut).unwrap();
 
