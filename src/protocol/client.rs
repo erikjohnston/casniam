@@ -1,12 +1,13 @@
 use failure::Error;
-use futures::compat::Future01CompatExt;
 use futures::FutureExt;
+use hyper;
 use rand::Rng;
 
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::json::signed::Signed;
+use crate::protocol::server_resolver::MatrixConnector;
 use crate::protocol::RoomVersion;
 
 pub trait TransactionSender {
@@ -21,7 +22,7 @@ pub trait TransactionSender {
 
 #[derive(Clone)]
 pub struct MemoryTransactionSender {
-    pub client: awc::Client,
+    pub client: hyper::Client<MatrixConnector>,
     pub server_name: String,
     pub key_name: String,
     pub secret_key: sodiumoxide::crypto::sign::SecretKey,
@@ -67,11 +68,19 @@ impl TransactionSender for MemoryTransactionSender {
         );
 
         async move {
-            client
-                .put(format!("https://{}{}", destination, path))
+            let uri = hyper::Uri::builder()
+                .scheme("matrix")
+                .authority(&destination as &str)
+                .path_and_query(&path as &str)
+                .build()?;
+
+            let request = hyper::Request::put(uri)
                 .header("Authorization", auth_header)
-                .send_json(&content)
-                .compat()
+                .header("Content-Type", "application/json")
+                .body(serde_json::to_vec(&content)?.into())?;
+
+            client
+                .request(request)
                 .await
                 .map_err(|e| format_err!("{}", e))?;
 

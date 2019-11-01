@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use actix_rt::Arbiter;
 use actix_web::{self, web, App, HttpResponse, HttpServer};
@@ -14,13 +15,13 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sodiumoxide::crypto::sign;
-
-use std::sync::{Arc, Mutex};
+use tide;
 
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::server_keys::KeyServerServlet;
+use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
 use casniam::protocol::{
     DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
     RoomVersion4,
@@ -574,144 +575,158 @@ fn main() -> std::io::Result<()> {
 
     let databases = Arc::new(Mutex::new(anymap::Map::new()));
 
-    HttpServer::new(move || {
-        let federation_sender = {
-            let mut ssl_builder =
-                openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
-                    .unwrap();
+    let (resolver, fut) = MatrixResolver::new().unwrap();
+    Arbiter::spawn(fut.map(|_| Ok(())).compat());
 
-            ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
+    let federation_sender = {
+        let mut ssl_builder =
+            openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+                .unwrap();
 
-            let client = awc::Client::build()
-                .connector(
-                    actix_http::client::Connector::new()
-                        .ssl(ssl_builder.build())
-                        .finish(),
-                )
-                .finish();
+        ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
 
-            MemoryTransactionSender {
-                client,
-                server_name: server_name.clone(),
-                key_name: key_id.clone(),
-                secret_key: secret_key.clone(),
-            }
-        };
+        let client = hyper::Client::builder()
+            .build(MatrixConnector::with_resolver(resolver));
 
-        let app_data = AppData {
+        MemoryTransactionSender {
+            client,
             server_name: server_name.clone(),
-            key_id: key_id.clone(),
+            key_name: key_id.clone(),
             secret_key: secret_key.clone(),
-            federation_sender,
-            room_databases: databases.clone(),
-        };
+        }
+    };
 
-        let key_server_servlet = key_server_servlet.clone();
+    let app_data = AppData {
+        server_name,
+        key_id,
+        secret_key,
+        federation_sender,
+        room_databases: databases,
+    };
 
-        App::new()
-            .data(app_data)
-            .wrap(actix_web::middleware::Logger::default())
-            .service(
-                web::resource("/_matrix/key/v2/server*")
-                    .route(web::get().to(move || key_server_servlet.render())),
-            )
-            .service(
-                web::resource(
-                    "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
-                )
-                .route(web::get().to_async(
-                    move |(path, app_data): (
-                        web::Path<(String, String)>,
-                        web::Data<AppData>,
-                    )| {
-                        app_data.get_ref().clone().make_join::<RoomVersion4>(
-                            path.0.clone(),
-                            path.1.clone(),
-                        )
-                        .boxed_local().compat()
-                    },
-                )),
-            )
-            .service(
-                web::resource(
-                    "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
-                )
-                .route(web::put().to_async(
-                    move |(path, app_data, event): (
-                        web::Path<(String, String)>,
-                        web::Data<AppData>,
-                        web::Json<<RoomVersion4 as RoomVersion>::Event>, // FIXME
-                    )| {
-                        app_data.get_ref().clone().send_join::<RoomVersion4>(
-                            path.0.clone(),
-                            event.0,
-                        )
-                        .boxed_local().compat()
-                    },
-                )),
-            )
-            .service(
-                web::resource("/_matrix/federation/v1/send/{txn_id}").route(
-                    web::put().to_async(move |(txn, app_data): (web::Json<Transaction<RoomVersion4>>, web::Data<AppData>)| {
-                        app_data.get_ref().clone().on_received_transaction(txn.0).boxed_local().compat()
-                    }),
-                ),
-            )
-            .service(
-                web::resource("/_matrix/federation/v1/backfill/{room_id}")
-                    .route(web::get().to_async(
-                        move |(_path, query, app_data): (
-                            web::Path<(String,)>,
-                            web::Query<Vec<(String, String)>>,
-                            web::Data<AppData>,
-                        )| {
-                            let mut event_ids = Vec::new();
-                            let mut limit = 100;
+    let app = tide::App::with_state(app_data);
+    app.at("/_matrix/key/v2/server*").get(move |_| {
+        async {
+            let body = key_server_servlet.make_body();
 
-                            for (key, value) in query.into_inner() {
-                                match &*key {
-                                    "v" => event_ids.push(value),
-                                    "limit" => {
-                                        if let Ok(l) = value.parse() {
-                                            limit = l
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
+            http::Response::builder()
+                .status(200)
+                .header("Content-Type", "application/json")
+                .body(serde_json::to_vec(&body).unwrap())
+                .unwrap()
+        }
+    });
 
-                            info!(
-                                "Got backfill request with ids: {:?}",
-                                event_ids
-                            );
+    app.serve("127.0.0.1:9999")
 
-                            app_data.get_ref().clone().get_backfill::<RoomVersion4>(
-                                event_ids,
-                                limit,
-                            )
-                            .boxed_local().compat()
-                        },
-                    )),
-            )
-            .service(
-                web::resource("/_matrix/federation/v1/query/directory").route(
-                    web::get().to(move |(app_data, query): (web::Data<AppData>, web::Query<Vec<(String, String)>>,)| {
-                        let query_map: BTreeMap<_, _> = query.into_inner().into_iter().collect();
+    // HttpServer::new(move || {
 
-                        let room_alias = &query_map["room_alias"];
+    //     let key_server_servlet = key_server_servlet.clone();
 
-                        let room_id = format!(
-                            "!{}:{}",
-                            base64::encode_config(&Sha256::digest(room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
-                            app_data.server_name.clone(),
-                        );
+    //     App::new()
+    //         .data(app_data.clone())
+    //         .wrap(actix_web::middleware::Logger::default())
+    //         .service(
+    //             web::resource("/_matrix/key/v2/server*")
+    //                 .route(web::get().to(move || key_server_servlet.render())),
+    //         )
+    //         .service(
+    //             web::resource(
+    //                 "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
+    //             )
+    //             .route(web::get().to_async(
+    //                 move |(path, app_data): (
+    //                     web::Path<(String, String)>,
+    //                     web::Data<AppData>,
+    //                 )| {
+    //                     app_data.get_ref().clone().make_join::<RoomVersion4>(
+    //                         path.0.clone(),
+    //                         path.1.clone(),
+    //                     )
+    //                     .boxed_local().compat()
+    //                 },
+    //             )),
+    //         )
+    //         .service(
+    //             web::resource(
+    //                 "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
+    //             )
+    //             .route(web::put().to_async(
+    //                 move |(path, app_data, event): (
+    //                     web::Path<(String, String)>,
+    //                     web::Data<AppData>,
+    //                     web::Json<<RoomVersion4 as RoomVersion>::Event>, // FIXME
+    //                 )| {
+    //                     app_data.get_ref().clone().send_join::<RoomVersion4>(
+    //                         path.0.clone(),
+    //                         event.0,
+    //                     )
+    //                     .boxed_local().compat()
+    //                 },
+    //             )),
+    //         )
+    //         .service(
+    //             web::resource("/_matrix/federation/v1/send/{txn_id}").route(
+    //                 web::put().to_async(move |(txn, app_data): (web::Json<Transaction<RoomVersion4>>, web::Data<AppData>)| {
+    //                     app_data.get_ref().clone().on_received_transaction(txn.0).boxed_local().compat()
+    //                 }),
+    //             ),
+    //         )
+    //         .service(
+    //             web::resource("/_matrix/federation/v1/backfill/{room_id}")
+    //                 .route(web::get().to_async(
+    //                     move |(_path, query, app_data): (
+    //                         web::Path<(String,)>,
+    //                         web::Query<Vec<(String, String)>>,
+    //                         web::Data<AppData>,
+    //                     )| {
+    //                         let mut event_ids = Vec::new();
+    //                         let mut limit = 100;
 
-                        HttpResponse::Ok().json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))
-                    }),
-                ),
-            )
-    })
-    .bind("127.0.0.1:8088")?
-    .bind_ssl("127.0.0.1:9999", ssl_builder)?
-    .run()
+    //                         for (key, value) in query.into_inner() {
+    //                             match &*key {
+    //                                 "v" => event_ids.push(value),
+    //                                 "limit" => {
+    //                                     if let Ok(l) = value.parse() {
+    //                                         limit = l
+    //                                     }
+    //                                 }
+    //                                 _ => {}
+    //                             }
+    //                         }
+
+    //                         info!(
+    //                             "Got backfill request with ids: {:?}",
+    //                             event_ids
+    //                         );
+
+    //                         app_data.get_ref().clone().get_backfill::<RoomVersion4>(
+    //                             event_ids,
+    //                             limit,
+    //                         )
+    //                         .boxed_local().compat()
+    //                     },
+    //                 )),
+    //         )
+    //         .service(
+    //             web::resource("/_matrix/federation/v1/query/directory").route(
+    //                 web::get().to(move |(app_data, query): (web::Data<AppData>, web::Query<Vec<(String, String)>>,)| {
+    //                     let query_map: BTreeMap<_, _> = query.into_inner().into_iter().collect();
+
+    //                     let room_alias = &query_map["room_alias"];
+
+    //                     let room_id = format!(
+    //                         "!{}:{}",
+    //                         base64::encode_config(&Sha256::digest(room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
+    //                         app_data.server_name.clone(),
+    //                     );
+
+    //                     HttpResponse::Ok().json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))
+    //                 }),
+    //             ),
+    //         )
+    // })
+    // .bind("127.0.0.1:8088")?
+    // .bind_ssl("127.0.0.1:9999", ssl_builder)?
+    // .run()
 }
