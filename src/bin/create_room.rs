@@ -6,16 +6,21 @@ use std::sync::{Arc, Mutex};
 use actix_rt::Arbiter;
 use actix_web::{self, web, App, HttpResponse, HttpServer};
 use failure::Error;
+use failure::ResultExt as _;
 use futures::compat::Future01CompatExt;
 use futures::{FutureExt, TryFutureExt};
+use http_service::Body;
 use log::info;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
+use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 use tide;
+use tide::error::ResultExt as _;
+use tide::querystring::ContextExt as _;
 
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
@@ -38,13 +43,9 @@ fn to_value(
     }
 }
 
-fn make_json_response(t: impl Serialize) -> http::Response<Vec<u8>> {
-    let bytes = serde_json::to_vec(&t).unwrap();
-    http::Response::builder()
-        .status(200)
-        .header("Content-Type", "application/json")
-        .body(bytes)
-        .unwrap()
+#[derive(Serialize, Deserialize)]
+struct RoomAliasQuery {
+    room_alias: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,7 +78,7 @@ impl AppData {
     async fn on_received_transaction<R>(
         self,
         txn: Transaction<R>,
-    ) -> Result<HttpResponse, Error>
+    ) -> Result<http::Response<Body>, Error>
     where
         R: RoomVersion,
         R::Event: Serialize + DeserializeOwned,
@@ -170,7 +171,7 @@ impl AppData {
             }
         }
 
-        Ok(HttpResponse::Ok().json(json!({})))
+        Ok(tide::response::json(json!({})))
     }
 
     /// Called `/backfill` requests
@@ -178,7 +179,7 @@ impl AppData {
         self,
         event_ids: Vec<String>,
         limit: usize,
-    ) -> Result<HttpResponse, Error>
+    ) -> Result<http::Response<Body>, Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
@@ -188,7 +189,7 @@ impl AppData {
             .get_backfill(event_ids, limit)
             .await?;
 
-        Ok(HttpResponse::Ok().json(json!({
+        Ok(tide::response::json(json!({
             "pdus": events,
         })))
     }
@@ -197,7 +198,7 @@ impl AppData {
         self,
         room_id: String,
         user_id: String,
-    ) -> Result<http::Response<Vec<u8>>, Error>
+    ) -> Result<http::Response<Body>, Error>
     where
         R: RoomVersion + Send,
         R::Event: Serialize + Send,
@@ -230,7 +231,7 @@ impl AppData {
             &self.secret_key,
         );
 
-        Ok(make_json_response(json!({
+        Ok(tide::response::json(json!({
             "room_version": R::VERSION,
             "event": event,
         })))
@@ -240,7 +241,7 @@ impl AppData {
         self,
         room_id: String,
         event: R::Event,
-    ) -> Result<HttpResponse, Error>
+    ) -> Result<http::Response<Body>, Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
@@ -275,7 +276,7 @@ impl AppData {
         let state = database.get_state_for(&[&event_id]).await?.unwrap();
         let state_events = database.get_events(state.values()).await?;
 
-        let resp = HttpResponse::Ok().json(json!([200, {
+        let resp = tide::response::json(json!([200, {
             "origin": self.server_name,
             "state": state_events.clone(),
             "auth_chain": state_events,
@@ -615,158 +616,118 @@ fn main() -> std::io::Result<()> {
         room_databases,
     };
 
-    let mut app = tide::App::with_state(app_data);
-
     let key_render = |ctx: tide::Context<AppData>| {
         async move {
             let body = ctx.state().key_server_servlet.make_body();
-            make_json_response(body)
+            tide::response::json(body)
         }
     };
+
+    let mut app = tide::App::with_state(app_data);
+
+    app.middleware(tide::middleware::RootLogger::new());
 
     app.at("/_matrix/key/v2/server").get(key_render);
     app.at("/_matrix/key/v2/server/:key*").get(key_render);
 
     app.at("/_matrix/federation/v1/make_join/:room_id/:user_id")
         .get(|ctx: tide::Context<AppData>| {
-            let state = ctx.state().clone();
-            let room_id: String = ctx.param("room_id").unwrap();
-            let user_id: String = ctx.param("user_id").unwrap();
-            std::mem::drop(ctx);
-
             async move {
+                let state = ctx.state().clone();
+                let room_id: String = ctx.param("room_id").client_err()?;
+                let user_id: String = ctx.param("user_id").client_err()?;
+
                 state
                     .make_join::<RoomVersion4>(room_id, user_id)
                     .await
-                    .unwrap()
+                    .compat()
+                    .server_err()
             }
         });
 
     app.at("/_matrix/federation/v1/send_join/:room_id/:event_id")
-        .get(|ctx: tide::Context<AppData>| {
-            let state = ctx.state().clone();
-            let room_id: String = ctx.param("room_id").unwrap();
-            let user_id: String = ctx.param("user_id").unwrap();
-            std::mem::drop(ctx);
-
+        .put(|mut ctx: tide::Context<AppData>| {
             async move {
+                let room_id: String = ctx.param("room_id").client_err()?;
+                let event = ctx.body_json().await.client_err()?;
+                let state = ctx.state();
+
                 state
-                    .send_join::<RoomVersion4>(room_id, user_id)
+                    .clone()
+                    .send_join::<RoomVersion4>(room_id, event)
                     .await
-                    .unwrap()
+                    .compat()
+                    .server_err()
             }
         });
 
-    // HttpServer::new(move || {
+    app.at("/_matrix/federation/v1/send/:txn_id").put(
+        |mut ctx: tide::Context<AppData>| {
+            async move {
+                let txn = ctx.body_json().await.client_err()?;
+                let state = ctx.state();
 
-    //     let key_server_servlet = key_server_servlet.clone();
+                state
+                    .clone()
+                    .on_received_transaction::<RoomVersion4>(txn)
+                    .await
+                    .compat()
+                    .server_err()
+            }
+        },
+    );
 
-    //     App::new()
-    //         .data(app_data.clone())
-    //         .wrap(actix_web::middleware::Logger::default())
-    //         .service(
-    //             web::resource("/_matrix/key/v2/server*")
-    //                 .route(web::get().to(move || key_server_servlet.render())),
-    //         )
-    //         .service(
-    //             web::resource(
-    //                 "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
-    //             )
-    //             .route(web::get().to_async(
-    //                 move |(path, app_data): (
-    //                     web::Path<(String, String)>,
-    //                     web::Data<AppData>,
-    //                 )| {
-    //                     app_data.get_ref().clone().make_join::<RoomVersion4>(
-    //                         path.0.clone(),
-    //                         path.1.clone(),
-    //                     )
-    //                     .boxed().compat()
-    //                 },
-    //             )),
-    //         )
-    //         .service(
-    //             web::resource(
-    //                 "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
-    //             )
-    //             .route(web::put().to_async(
-    //                 move |(path, app_data, event): (
-    //                     web::Path<(String, String)>,
-    //                     web::Data<AppData>,
-    //                     web::Json<<RoomVersion4 as RoomVersion>::Event>, // FIXME
-    //                 )| {
-    //                     app_data.get_ref().clone().send_join::<RoomVersion4>(
-    //                         path.0.clone(),
-    //                         event.0,
-    //                     )
-    //                     .boxed().compat()
-    //                 },
-    //             )),
-    //         )
-    //         .service(
-    //             web::resource("/_matrix/federation/v1/send/{txn_id}").route(
-    //                 web::put().to_async(move |(txn, app_data): (web::Json<Transaction<RoomVersion4>>, web::Data<AppData>)| {
-    //                     app_data.get_ref().clone().on_received_transaction(txn.0).boxed().compat()
-    //                 }),
-    //             ),
-    //         )
-    //         .service(
-    //             web::resource("/_matrix/federation/v1/backfill/{room_id}")
-    //                 .route(web::get().to_async(
-    //                     move |(_path, query, app_data): (
-    //                         web::Path<(String,)>,
-    //                         web::Query<Vec<(String, String)>>,
-    //                         web::Data<AppData>,
-    //                     )| {
-    //                         let mut event_ids = Vec::new();
-    //                         let mut limit = 100;
+    app.at("/_matrix/federation/v1/backfill/:room_id").get(
+        |ctx: tide::Context<AppData>| {
+            async move {
+                let state = ctx.state();
 
-    //                         for (key, value) in query.into_inner() {
-    //                             match &*key {
-    //                                 "v" => event_ids.push(value),
-    //                                 "limit" => {
-    //                                     if let Ok(l) = value.parse() {
-    //                                         limit = l
-    //                                     }
-    //                                 }
-    //                                 _ => {}
-    //                             }
-    //                         }
+                let mut event_ids = Vec::new();
+                let mut limit = 100;
 
-    //                         info!(
-    //                             "Got backfill request with ids: {:?}",
-    //                             event_ids
-    //                         );
+                for (key, value) in ctx.url_query::<Vec<(String, String)>>()? {
+                    match &*key {
+                        "v" => event_ids.push(value),
+                        "limit" => {
+                            if let Ok(l) = value.parse() {
+                                limit = l
+                            }
+                        }
+                        _ => {}
+                    }
+                }
 
-    //                         app_data.get_ref().clone().get_backfill::<RoomVersion4>(
-    //                             event_ids,
-    //                             limit,
-    //                         )
-    //                         .boxed().compat()
-    //                     },
-    //                 )),
-    //         )
-    //         .service(
-    //             web::resource("/_matrix/federation/v1/query/directory").route(
-    //                 web::get().to(move |(app_data, query): (web::Data<AppData>, web::Query<Vec<(String, String)>>,)| {
-    //                     let query_map: BTreeMap<_, _> = query.into_inner().into_iter().collect();
+                info!("Got backfill request with ids: {:?}", event_ids);
 
-    //                     let room_alias = &query_map["room_alias"];
+                state
+                    .clone()
+                    .get_backfill::<RoomVersion4>(event_ids, limit)
+                    .await
+                    .compat()
+                    .server_err()
+            }
+        },
+    );
 
-    //                     let room_id = format!(
-    //                         "!{}:{}",
-    //                         base64::encode_config(&Sha256::digest(room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
-    //                         app_data.server_name.clone(),
-    //                     );
+    app.at("/_matrix/federation/v1/query/directory").get(
+        |ctx: tide::Context<AppData>| {
+            async move {
+                let state = ctx.state();
 
-    //                     HttpResponse::Ok().json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))
-    //                 }),
-    //             ),
-    //         )
-    // })
-    // .bind("127.0.0.1:8088")?
+                let query: RoomAliasQuery = ctx.url_query()?;
+
+                let room_id = format!(
+                    "!{}:{}",
+                    base64::encode_config(&Sha256::digest(query.room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
+                    state.server_name.clone(),
+                );
+
+                Ok(tide::response::json(json!({ "room_id": room_id, "servers": &[&state.server_name] }))) as Result<_, tide::Error>
+            }
+        },
+    );
+
     // .bind_ssl("127.0.0.1:9999", ssl_builder)?
-    // .run()
 
-    app.serve("127.0.0.1:9990")
+    app.serve("127.0.0.1:8088")
 }
