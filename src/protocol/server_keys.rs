@@ -78,7 +78,7 @@ impl KeyServerServlet {
         }
     }
 
-    pub fn make_body(&self) -> impl Serialize {
+    pub fn make_body(&self) -> impl Serialize + 'static {
         make_server_keys(
             self.server_name.clone(),
             self.verify_keys.clone(),

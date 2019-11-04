@@ -1,10 +1,11 @@
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
+
 use std::marker::PhantomData;
-use std::pin::Pin;
+
 
 use failure::Error;
+use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use petgraph::{graphmap::DiGraphMap, Direction};
 use serde_json::Value;
@@ -25,7 +26,7 @@ where
     fn resolve_state<S: RoomState>(
         states: Vec<S>,
         store: &impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>> {
+    ) -> BoxFuture<Result<S, Error>> {
         let store = store.clone();
         async move {
             let (
@@ -67,7 +68,7 @@ where
             .await?;
             Ok(resolved)
         }
-        .boxed_local()
+        .boxed()
     }
 }
 
@@ -888,10 +889,9 @@ mod tests {
             vec![pb.clone()],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[pb, pc.clone()]))
-                .unwrap()
-                .unwrap();
+        let final_state = block_on(store.get_state_for(&[pb, pc.clone()]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1022,19 +1022,12 @@ mod tests {
             vec![pa1],
         );
 
-        let t3 = create_event(
-            &store,
-            "m.room.topic",
-            Some(""),
-            bob,
-            None,
-            vec![pb],
-        );
+        let t3 =
+            create_event(&store, "m.room.topic", Some(""), bob, None, vec![pb]);
 
-        let final_state =
-            block_on(store.get_state_for(&[pa2.clone(), t3]))
-                .unwrap()
-                .unwrap();
+        let final_state = block_on(store.get_state_for(&[pa2.clone(), t3]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1300,14 +1293,8 @@ mod tests {
             vec![pa1],
         );
 
-        let t3 = create_event(
-            &store,
-            "m.room.topic",
-            Some(""),
-            bob,
-            None,
-            vec![pb],
-        );
+        let t3 =
+            create_event(&store, "m.room.topic", Some(""), bob, None, vec![pb]);
 
         let msg = create_event(
             &store,
@@ -1327,10 +1314,9 @@ mod tests {
             vec![msg.clone()],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[msg, t4.clone()]))
-                .unwrap()
-                .unwrap();
+        let final_state = block_on(store.get_state_for(&[msg, t4.clone()]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),

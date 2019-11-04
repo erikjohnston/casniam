@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use failure::Error;
+
 use futures::Future;
 use serde_json::{self, Value};
 
@@ -35,7 +36,7 @@ where
         e: &'a Self::Event,
         s: &'a impl RoomState,
         store: &'a impl EventStore<Event = E>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
         Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
 

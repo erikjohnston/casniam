@@ -2,10 +2,11 @@ use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::stores::{EventStore, RoomStore};
 
 use failure::Error;
-use futures::{future, Future, FutureExt};
+use futures::future::BoxFuture;
+use futures::{future, FutureExt};
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::pin::Pin;
+
 use std::sync::{Arc, RwLock};
 
 #[derive(Default, Debug)]
@@ -35,7 +36,7 @@ impl<R, S> MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + 'static,
+    S: RoomState + Send + Sync + 'static,
 {
     pub fn get_all_events(&self) -> Vec<R::Event> {
         let store = self.0.read().expect("Mutex poisoned");
@@ -58,7 +59,7 @@ impl<R, S> EventStore for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + 'static,
+    S: RoomState + Send + Sync + 'static,
 {
     type Event = R::Event;
     type RoomState = S;
@@ -67,7 +68,7 @@ where
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
         for (event, state) in events {
@@ -81,7 +82,7 @@ where
     fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<String>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
@@ -97,7 +98,7 @@ where
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
@@ -107,14 +108,13 @@ where
                 .cloned()
                 .collect(),
         )
-        .boxed_local()
+        .boxed()
     }
 
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
-    {
+    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
         let mut states: Vec<Self::RoomState> =
             Vec::with_capacity(event_ids.len());
 
@@ -142,7 +142,7 @@ where
                     states.push(state_ids);
                 } else {
                     // We don't have all the state.
-                    return future::ok(None).boxed_local();
+                    return future::ok(None).boxed();
                 }
             }
         }
@@ -154,7 +154,7 @@ where
 
             Ok(Some(state))
         }
-        .boxed_local()
+        .boxed()
     }
 }
 
@@ -169,7 +169,7 @@ where
     fn insert_new_events(
         &self,
         events: impl IntoIterator<Item = Self::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
         for event in events {
@@ -209,7 +209,7 @@ where
     fn get_forward_extremities(
         &self,
         room_id: String,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>> {
+    ) -> BoxFuture<Result<BTreeSet<String>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         let extrems = store

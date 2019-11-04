@@ -1,63 +1,64 @@
 use crate::protocol::{Event, RoomState, RoomVersion};
 
 use std::collections::BTreeSet;
-use std::future::Future;
+
 use std::iter;
 use std::mem::swap;
-use std::pin::Pin;
+
 
 use failure::Error;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 
 pub mod backed;
 pub mod memory;
 
-pub trait EventStore: Clone + 'static {
+pub trait EventStore: Send + Sync + Clone + 'static {
     type Event: Event + Send;
-    type RoomState: RoomState;
+    type RoomState: RoomState + Send + Sync;
     type RoomVersion: RoomVersion<Event = Self::Event>;
 
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
+    ) -> BoxFuture<Result<(), Error>>;
 
     fn insert_event(
         &self,
         event: Self::Event,
         state: Self::RoomState,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         self.insert_events(iter::once((event, state)))
     }
 
     fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>>;
+    ) -> BoxFuture<Result<Vec<String>, Error>>;
 
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>;
+    ) -> BoxFuture<Result<Vec<Self::Event>, Error>>;
 
     fn get_event(
         &self,
         event_id: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::Event>, Error>>>> {
+    ) -> BoxFuture<Result<Option<Self::Event>, Error>> {
         self.get_events(iter::once(event_id))
             .map(|r| r.map(|v| v.into_iter().next()))
-            .boxed_local()
+            .boxed()
     }
 
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>;
+    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>>;
 
     fn get_conflicted_auth_chain(
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<Vec<String>> = event_ids
@@ -121,14 +122,14 @@ pub trait EventStore: Clone + 'static {
 
             Ok(events)
         }
-        .boxed_local()
+        .boxed()
     }
 
     fn get_backfill(
         &self,
         event_ids: Vec<String>,
         limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
         let database = self.clone();
 
         async move {
@@ -154,7 +155,7 @@ pub trait EventStore: Clone + 'static {
 
             Ok(to_return)
         }
-        .boxed_local()
+        .boxed()
     }
 }
 
@@ -166,12 +167,12 @@ pub trait RoomStore: Clone + 'static {
     fn insert_new_events(
         &self,
         events: impl IntoIterator<Item = Self::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
+    ) -> BoxFuture<Result<(), Error>>;
 
     fn insert_new_event(
         &self,
         event: Self::Event,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         self.insert_new_events(iter::once(event))
     }
 
@@ -179,5 +180,5 @@ pub trait RoomStore: Clone + 'static {
     fn get_forward_extremities(
         &self,
         room_id: String,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, Error>>>>;
+    ) -> BoxFuture<Result<BTreeSet<String>, Error>>;
 }

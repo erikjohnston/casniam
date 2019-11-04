@@ -1,6 +1,7 @@
 use crate::stores::backed::BackedStore;
 use crate::stores::EventStore;
 
+use futures::future::BoxFuture;
 use futures::future::Future;
 use log::info;
 use petgraph::visit::Walker;
@@ -42,7 +43,7 @@ pub trait Event: Serialize + Sync + Send + Clone + fmt::Debug {
         builder: events::EventBuilder,
         state: S,
         prev_events: Vec<Self>,
-    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>> + Send>>;
 
     fn sign(
         &mut self,
@@ -76,7 +77,7 @@ pub trait RoomStateResolver {
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
         store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
+    ) -> BoxFuture<Result<S, Error>>;
 }
 
 pub trait RoomState:
@@ -84,6 +85,8 @@ pub trait RoomState:
     + FromIterator<((String, String), String)>
     + Clone
     + Debug
+    + Send
+    + Sync
     + 'static
 {
     fn new() -> Self;
@@ -113,7 +116,7 @@ pub trait AuthRules {
         e: &Self::Event,
         s: &impl RoomState,
         store: &impl EventStore<Event = Self::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
     fn auth_types_for_event(
         event_type: &str,
@@ -123,7 +126,7 @@ pub trait AuthRules {
     ) -> Vec<(String, String)>;
 }
 
-pub trait RoomVersion: Clone + 'static {
+pub trait RoomVersion: Send + Sync + Clone + 'static {
     type Event: Event;
     type State: RoomStateResolver<Auth = Self::Auth>;
     type Auth: AuthRules<Event = Self::Event>;
@@ -163,12 +166,12 @@ pub trait FederationClient {
         forward: Vec<String>,
         back: Vec<String>,
         limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<E>, Error>>>>;
+    ) -> BoxFuture<Result<Vec<E>, Error>>;
 
     fn get_state_at<S: RoomState>(
         &self,
         event_id: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>>;
+    ) -> BoxFuture<Result<S, Error>>;
 }
 
 pub trait FederationTransactionQueue {
@@ -176,7 +179,7 @@ pub trait FederationTransactionQueue {
         &self,
         chunk: DagChunkFragment<V::Event>,
         destinations: Vec<String>,
-    ) -> Pin<Box<dyn Future<Output = ()>>>;
+    ) -> BoxFuture<()>;
 }
 
 pub struct Handler<E: EventStore> {
@@ -498,7 +501,7 @@ mod tests {
             _builder: events::EventBuilder,
             _state: S,
             _prev_events: Vec<Self>,
-        ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
+        ) -> BoxFuture<Result<Self, Error>> {
             unimplemented!()
         }
 
@@ -615,7 +618,7 @@ mod tests {
         fn resolve_state<'a, S: RoomState>(
             _states: Vec<S>,
             _store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
-        ) -> Pin<Box<dyn Future<Output = Result<S, Error>>>> {
+        ) -> BoxFuture<Result<S, Error>> {
             Box::pin(future::ok(S::new()))
         }
     }
@@ -629,7 +632,7 @@ mod tests {
             _e: &Self::Event,
             _s: &impl RoomState,
             _store: &impl EventStore<Event = Self::Event>,
-        ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+        ) -> BoxFuture<Result<(), Error>> {
             Box::pin(future::ok(()))
         }
 
@@ -665,7 +668,7 @@ mod tests {
         fn insert_events(
             &self,
             _events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-        ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+        ) -> BoxFuture<Result<(), Error>> {
             unimplemented!()
         }
 
@@ -674,31 +677,28 @@ mod tests {
         >(
             &self,
             _event_ids: I,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
+        ) -> BoxFuture<Result<Vec<String>, Error>> {
             unimplemented!()
         }
 
         fn get_events(
             &self,
             _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>
-        {
+        ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
             unimplemented!()
         }
 
         fn get_state_for<T: AsRef<str>>(
             &self,
             _event_ids: &[T],
-        ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
-        {
+        ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
             unimplemented!()
         }
 
         fn get_conflicted_auth_chain(
             &self,
             _event_ids: Vec<Vec<impl AsRef<str>>>,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>>
-        {
+        ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
             unimplemented!()
         }
     }

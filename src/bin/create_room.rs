@@ -13,7 +13,7 @@ use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
 use sodiumoxide::crypto::sign;
 use tide;
 
@@ -38,6 +38,15 @@ fn to_value(
     }
 }
 
+fn make_json_response(t: impl Serialize) -> http::Response<Vec<u8>> {
+    let bytes = serde_json::to_vec(&t).unwrap();
+    http::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .body(bytes)
+        .unwrap()
+}
+
 #[derive(Serialize, Deserialize)]
 struct Transaction<R: RoomVersion>
 where
@@ -53,6 +62,7 @@ struct AppData {
     secret_key: sign::SecretKey,
     room_databases: Arc<Mutex<anymap::Map<dyn anymap::any::Any + Send>>>,
     federation_sender: MemoryTransactionSender,
+    key_server_servlet: KeyServerServlet,
 }
 
 impl AppData {
@@ -187,10 +197,10 @@ impl AppData {
         self,
         room_id: String,
         user_id: String,
-    ) -> Result<HttpResponse, Error>
+    ) -> Result<http::Response<Vec<u8>>, Error>
     where
-        R: RoomVersion,
-        R::Event: Serialize,
+        R: RoomVersion + Send,
+        R::Event: Serialize + Send,
     {
         let database = self.get_database::<R>();
 
@@ -220,7 +230,7 @@ impl AppData {
             &self.secret_key,
         );
 
-        Ok(HttpResponse::Ok().json(json!({
+        Ok(make_json_response(json!({
             "room_version": R::VERSION,
             "event": event,
         })))
@@ -358,7 +368,7 @@ impl AppData {
 
             Ok(())
         }
-        .boxed_local();
+        .boxed();
 
         Arbiter::spawn(send_fut.map_err(|_: Error| ()).compat());
 
@@ -367,8 +377,8 @@ impl AppData {
 
     /// Create a new chunk from a set of builders. Doesn't persist.
     async fn generate_chunk<
-        R: RoomVersion,
-        B: IntoIterator<Item = EventBuilder>,
+        R: RoomVersion + Send,
+        B: IntoIterator<Item = EventBuilder> + Send,
     >(
         self,
         room_id: String,
@@ -457,8 +467,8 @@ impl AppData {
         room_id: String,
     ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
     where
-        R: RoomVersion,
-        R::Event: Serialize,
+        R: RoomVersion + Send,
+        R::Event: Serialize + Send,
     {
         let creator = format!("@alice:{}", &self.server_name);
 
@@ -573,7 +583,7 @@ fn main() -> std::io::Result<()> {
         BTreeMap::new(),
     );
 
-    let databases = Arc::new(Mutex::new(anymap::Map::new()));
+    let room_databases = Arc::new(Mutex::new(anymap::Map::new()));
 
     let (resolver, fut) = MatrixResolver::new().unwrap();
     Arbiter::spawn(fut.map(|_| Ok(())).compat());
@@ -601,23 +611,51 @@ fn main() -> std::io::Result<()> {
         key_id,
         secret_key,
         federation_sender,
-        room_databases: databases,
+        key_server_servlet,
+        room_databases,
     };
 
-    let app = tide::App::with_state(app_data);
-    app.at("/_matrix/key/v2/server*").get(move |_| {
-        async {
-            let body = key_server_servlet.make_body();
+    let mut app = tide::App::with_state(app_data);
 
-            http::Response::builder()
-                .status(200)
-                .header("Content-Type", "application/json")
-                .body(serde_json::to_vec(&body).unwrap())
-                .unwrap()
+    let key_render = |ctx: tide::Context<AppData>| {
+        async move {
+            let body = ctx.state().key_server_servlet.make_body();
+            make_json_response(body)
         }
-    });
+    };
 
-    app.serve("127.0.0.1:9999")
+    app.at("/_matrix/key/v2/server").get(key_render);
+    app.at("/_matrix/key/v2/server/:key*").get(key_render);
+
+    app.at("/_matrix/federation/v1/make_join/:room_id/:user_id")
+        .get(|ctx: tide::Context<AppData>| {
+            let state = ctx.state().clone();
+            let room_id: String = ctx.param("room_id").unwrap();
+            let user_id: String = ctx.param("user_id").unwrap();
+            std::mem::drop(ctx);
+
+            async move {
+                state
+                    .make_join::<RoomVersion4>(room_id, user_id)
+                    .await
+                    .unwrap()
+            }
+        });
+
+    app.at("/_matrix/federation/v1/send_join/:room_id/:event_id")
+        .get(|ctx: tide::Context<AppData>| {
+            let state = ctx.state().clone();
+            let room_id: String = ctx.param("room_id").unwrap();
+            let user_id: String = ctx.param("user_id").unwrap();
+            std::mem::drop(ctx);
+
+            async move {
+                state
+                    .send_join::<RoomVersion4>(room_id, user_id)
+                    .await
+                    .unwrap()
+            }
+        });
 
     // HttpServer::new(move || {
 
@@ -643,7 +681,7 @@ fn main() -> std::io::Result<()> {
     //                         path.0.clone(),
     //                         path.1.clone(),
     //                     )
-    //                     .boxed_local().compat()
+    //                     .boxed().compat()
     //                 },
     //             )),
     //         )
@@ -661,14 +699,14 @@ fn main() -> std::io::Result<()> {
     //                         path.0.clone(),
     //                         event.0,
     //                     )
-    //                     .boxed_local().compat()
+    //                     .boxed().compat()
     //                 },
     //             )),
     //         )
     //         .service(
     //             web::resource("/_matrix/federation/v1/send/{txn_id}").route(
     //                 web::put().to_async(move |(txn, app_data): (web::Json<Transaction<RoomVersion4>>, web::Data<AppData>)| {
-    //                     app_data.get_ref().clone().on_received_transaction(txn.0).boxed_local().compat()
+    //                     app_data.get_ref().clone().on_received_transaction(txn.0).boxed().compat()
     //                 }),
     //             ),
     //         )
@@ -704,7 +742,7 @@ fn main() -> std::io::Result<()> {
     //                             event_ids,
     //                             limit,
     //                         )
-    //                         .boxed_local().compat()
+    //                         .boxed().compat()
     //                     },
     //                 )),
     //         )
@@ -729,4 +767,6 @@ fn main() -> std::io::Result<()> {
     // .bind("127.0.0.1:8088")?
     // .bind_ssl("127.0.0.1:9999", ssl_builder)?
     // .run()
+
+    app.serve("127.0.0.1:9990")
 }

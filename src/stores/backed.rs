@@ -3,11 +3,12 @@ use crate::stores::memory::{new_memory_store, MemoryEventStore};
 use crate::stores::EventStore;
 
 use failure::Error;
-use futures::{Future, FutureExt};
+use futures::future::BoxFuture;
+use futures::{FutureExt};
 
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
-use std::pin::Pin;
+
 
 #[derive(Clone)]
 pub struct BackedStore<S: EventStore> {
@@ -32,14 +33,14 @@ impl<S: EventStore> EventStore for BackedStore<S> {
     fn insert_events(
         &self,
         events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         self.memory.insert_events(events)
     }
 
     fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<String>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> = event_ids
@@ -56,13 +57,13 @@ impl<S: EventStore> EventStore for BackedStore<S> {
 
             Ok(missing)
         }
-        .boxed_local()
+        .boxed()
     }
 
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Self::Event>, Error>>>> {
+    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> = event_ids
@@ -84,14 +85,13 @@ impl<S: EventStore> EventStore for BackedStore<S> {
 
             Ok(events)
         }
-        .boxed_local()
+        .boxed()
     }
 
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Self::RoomState>, Error>>>>
-    {
+    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> =
@@ -117,6 +117,6 @@ impl<S: EventStore> EventStore for BackedStore<S> {
                 <<S as EventStore>::RoomVersion as RoomVersion>::State::resolve_state(states, &store).await?;
             Ok(Some(state))
         }
-        .boxed_local()
+        .boxed()
     }
 }

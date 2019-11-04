@@ -439,7 +439,7 @@ impl<E> FromIterator<((String, String), E)> for StateMap<E>
 where
     E: Debug + Clone,
 {
-    fn from_iter<T: IntoIterator<Item = (((String, String), E))>>(
+    fn from_iter<T: IntoIterator<Item = ((String, String), E)>>(
         iter: T,
     ) -> StateMap<E> {
         let mut state_map = StateMap::new();
@@ -456,7 +456,7 @@ impl<'a, E> FromIterator<((&'a str, &'a str), E)> for StateMap<E>
 where
     E: Debug + Clone,
 {
-    fn from_iter<T: IntoIterator<Item = (((&'a str, &'a str), E))>>(
+    fn from_iter<T: IntoIterator<Item = ((&'a str, &'a str), E)>>(
         iter: T,
     ) -> StateMap<E> {
         let mut state_map = StateMap::new();

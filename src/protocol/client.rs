@@ -1,10 +1,11 @@
 use failure::Error;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use hyper;
 use rand::Rng;
 
-use std::future::Future;
-use std::pin::Pin;
+
+
 
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
@@ -17,7 +18,7 @@ pub trait TransactionSender {
         &self,
         destination: String,
         event: R::Event,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>;
+    ) -> BoxFuture<Result<(), Error>>;
 }
 
 #[derive(Clone)]
@@ -33,7 +34,7 @@ impl TransactionSender for MemoryTransactionSender {
         &self,
         destination: String,
         event: R::Event,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> BoxFuture<Result<(), Error>> {
         let mut rng = rand::thread_rng();
         let txn_id: String = std::iter::repeat(())
             .map(|()| rng.sample(rand::distributions::Alphanumeric))
@@ -86,7 +87,7 @@ impl TransactionSender for MemoryTransactionSender {
 
             Ok(())
         }
-        .boxed_local()
+        .boxed()
     }
 }
 

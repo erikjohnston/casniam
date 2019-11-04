@@ -5,6 +5,7 @@ use crate::protocol::{AuthRules, Event, RoomState, RoomVersion};
 
 use base64;
 use failure::Error;
+
 use futures::{Future, FutureExt};
 use serde::de::{Deserialize, Deserializer};
 use serde_json::json;
@@ -259,8 +260,8 @@ impl Event for SignedEventV2 {
         builder: super::EventBuilder,
         state: S,
         prev_events: Vec<R::Event>,
-    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>>>> {
-        Self::from_builder::<R, S>(builder, state, prev_events).boxed_local()
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Error>> + Send>> {
+        Self::from_builder::<R, S>(builder, state, prev_events).boxed()
     }
 
     fn sign(
