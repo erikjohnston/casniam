@@ -501,7 +501,7 @@ mod tests {
             _builder: events::EventBuilder,
             _state: S,
             _prev_events: Vec<Self>,
-        ) -> BoxFuture<Result<Self, Error>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Self, Error>> + Send>> {
             unimplemented!()
         }
 
@@ -632,7 +632,7 @@ mod tests {
             _e: &Self::Event,
             _s: &impl RoomState,
             _store: &impl EventStore<Event = Self::Event>,
-        ) -> BoxFuture<Result<(), Error>> {
+        ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
             Box::pin(future::ok(()))
         }
 

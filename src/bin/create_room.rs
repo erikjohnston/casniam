@@ -1,15 +1,20 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 
 use actix_rt::Arbiter;
-use actix_web::{self, web, App, HttpResponse, HttpServer};
+
 use failure::Error;
 use failure::ResultExt as _;
 use futures::compat::Future01CompatExt;
 use futures::{FutureExt, TryFutureExt};
+use futures_util::try_stream::TryStreamExt;
 use http_service::Body;
+use http_service::HttpService;
+use hyper::server::accept::Accept;
 use log::info;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -21,6 +26,7 @@ use sodiumoxide::crypto::sign;
 use tide;
 use tide::error::ResultExt as _;
 use tide::querystring::ContextExt as _;
+use tokio::net::TcpListener;
 
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
@@ -548,7 +554,8 @@ impl AppData {
     }
 }
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let server_name = "localhost:9999".to_string();
@@ -729,5 +736,60 @@ fn main() -> std::io::Result<()> {
 
     // .bind_ssl("127.0.0.1:9999", ssl_builder)?
 
-    app.serve("127.0.0.1:8088")
+    // app.serve("127.0.0.1:8088")
+
+    let mut file = File::open("identity.pfx").unwrap();
+    let mut identity = vec![];
+    file.read_to_end(&mut identity).unwrap();
+    let identity =
+        native_tls::Identity::from_pkcs12(&identity, "test").unwrap();
+    let acceptor = native_tls::TlsAcceptor::new(identity).unwrap();
+    let acceptor = tokio_tls::TlsAcceptor::from(acceptor);
+
+    let mut listener = TcpListener::bind("127.0.0.1:9999").await?;
+
+    let http_config = hyper::server::conn::Http::new();
+
+    let tide_server = app.into_http_service();
+
+    let new_service = move || {
+        let tide_server = tide_server.clone();
+
+        hyper::service::service_fn(
+            move |mut req: http::Request<hyper::Body>| -> futures::future::BoxFuture<
+                Result<http::Response<hyper::Body>, failure::Error>,
+            > {
+                let s = tide_server.clone();
+
+                async move {
+                    let mut vec: Vec<u8> = Vec::new();
+                    while let Some(next) = req.body_mut().next().await {
+                        let chunk = next?;
+                        vec.extend(chunk);
+                    }
+
+                    let req = req.map(|_| Body::from(vec));
+                    let resp = s.respond(&mut (), req).await?;
+
+                    let (parts, body) = resp.into_parts();
+                    let resp_body = body.into_vec().await?;
+
+                    Ok(http::Response::from_parts(
+                        parts,
+                        hyper::Body::from(resp_body),
+                    ))
+                }
+                .boxed()
+            },
+        )
+    };
+
+    loop {
+        let (stream, remote_addr) = listener.accept().await.unwrap();
+        let tls_stream = acceptor.accept(stream).await.unwrap();
+
+        let fut = http_config.serve_connection(tls_stream, new_service());
+
+        tokio::spawn(fut.map(|_| ()));
+    }
 }

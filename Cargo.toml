@@ -36,6 +36,9 @@ hyper-tls = "0.4.0-alpha.4"
 native-tls = "0.2.3"
 tide = "0.3.0"
 http-service = "0.3.1"
+http-service-hyper = "0.3.1"
+futures-util-preview = "0.3.0-alpha.19"
+bytes = "0.4.12"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
