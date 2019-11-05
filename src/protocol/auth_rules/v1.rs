@@ -18,7 +18,7 @@ pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string
         .splitn(2, ':')
         .nth(1)
-        .ok_or_else(|| format_err!("invalid ID"))
+        .ok_or_else(|| format_err!("invalid ID: {}", string))
 }
 
 #[derive(Default)]

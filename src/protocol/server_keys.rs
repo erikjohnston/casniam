@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use actix_web::HttpResponse;
 use chrono::{Duration, Utc};
 use serde::Serialize;
 use sodiumoxide::crypto::sign;
@@ -84,9 +83,5 @@ impl KeyServerServlet {
             self.verify_keys.clone(),
             self.old_verify_keys.clone(),
         )
-    }
-
-    pub fn render(&self) -> HttpResponse {
-        HttpResponse::Ok().json(self.make_body())
     }
 }

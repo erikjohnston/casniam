@@ -5,8 +5,6 @@ use std::fs::File;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
-use actix_rt::Arbiter;
-
 use failure::Error;
 use failure::ResultExt as _;
 use futures::compat::Future01CompatExt;
@@ -16,6 +14,7 @@ use http_service::Body;
 use http_service::HttpService;
 use hyper::server::accept::Accept;
 use log::info;
+use percent_encoding::percent_decode_str;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -336,7 +335,7 @@ impl AppData {
                 .send_event::<R>(event_origin.clone(), event.clone())
                 .await?;
 
-            tokio_timer::Delay::new(std::time::Instant::now() + std::time::Duration::from_secs(30)).compat().await?;
+            tokio_timer::delay_for(std::time::Duration::from_secs(30)).await;
 
             let builder = EventBuilder::new(
                 &room_id,
@@ -377,7 +376,7 @@ impl AppData {
         }
         .boxed();
 
-        Arbiter::spawn(send_fut.map_err(|_: Error| ()).compat());
+        tokio::spawn(send_fut.map(|_: Result<_, Error>| ()));
 
         Ok(resp)
     }
@@ -594,7 +593,7 @@ async fn main() -> std::io::Result<()> {
     let room_databases = Arc::new(Mutex::new(anymap::Map::new()));
 
     let (resolver, fut) = MatrixResolver::new().unwrap();
-    Arbiter::spawn(fut.map(|_| Ok(())).compat());
+    tokio::spawn(fut.map(|_| ()));
 
     let federation_sender = {
         let mut ssl_builder =
@@ -644,6 +643,16 @@ async fn main() -> std::io::Result<()> {
                 let room_id: String = ctx.param("room_id").client_err()?;
                 let user_id: String = ctx.param("user_id").client_err()?;
 
+                let room_id = percent_decode_str(&room_id)
+                    .decode_utf8()
+                    .client_err()?
+                    .into_owned();
+
+                let user_id = percent_decode_str(&user_id)
+                    .decode_utf8()
+                    .client_err()?
+                    .into_owned();
+
                 state
                     .make_join::<RoomVersion4>(room_id, user_id)
                     .await
@@ -658,6 +667,11 @@ async fn main() -> std::io::Result<()> {
                 let room_id: String = ctx.param("room_id").client_err()?;
                 let event = ctx.body_json().await.client_err()?;
                 let state = ctx.state();
+
+                let room_id = percent_decode_str(&room_id)
+                    .decode_utf8()
+                    .client_err()?
+                    .into_owned();
 
                 state
                     .clone()

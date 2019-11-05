@@ -5,14 +5,11 @@ name = "casniam"
 version = "0.1.0"
 
 [dependencies]
-# actix = "0.7.9"
 base64 = "0.11.0"
 chrono = "0.4.6"
 failure = "0.1.5"
 petgraph = "0.4.13"
 rand = "0.7.0"
-serde = "1.0.84"
-serde_derive = "1.0.84"
 sha2 = "0.8.0"
 smallvec = "1.0.0"
 sodiumoxide = "0.2.1"
@@ -22,14 +19,9 @@ openssl = "0.10.24"
 env_logger = "0.7.0"
 log = "0.4.6"
 serde_urlencoded = "0.6.1"
-awc = "0.2.2"
-tokio-timer = "0.2.11"
-actix-rt = "0.2.4"
-actix-http = "0.2.8"
+tokio-timer = "0.3.0-alpha.6"
 trust-dns-resolver = "0.12.0"
 http = "0.1.19"
-actix-connect = "0.3.0"
-actix-service = "0.4.2"
 tokio-tls = "0.3.0-alpha.6"
 hyper = "0.13.0-alpha.4"
 hyper-tls = "0.4.0-alpha.4"
@@ -39,6 +31,8 @@ http-service = "0.3.1"
 http-service-hyper = "0.3.1"
 futures-util-preview = "0.3.0-alpha.19"
 bytes = "0.4.12"
+percent-encoding = "2.1.0"
+serde_derive = "1.0.102"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
@@ -46,6 +40,11 @@ git = "https://github.com/NegativeMjark/indolentjson-rust.git"
 [dependencies.serde_json]
 features = ["raw_value"]
 version = "1.0.27"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
 
 [dependencies.futures]
 package = "futures-preview"
@@ -56,9 +55,6 @@ features = ["compat"]
 features = ["std"]
 version = "0.6.0"
 
-[dependencies.actix-web]
-features = ["ssl"]
-version = "1.0.0"
 
 #[replace."cookie:0.11.0"]
 #git = "https://github.com/alexcrichton/cookie-rs.git"
