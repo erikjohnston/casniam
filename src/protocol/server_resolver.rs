@@ -6,6 +6,7 @@ use hyper;
 use hyper::client::connect::{Connect, Connected, Destination, HttpConnector};
 use hyper::Client;
 use hyper_tls::HttpsConnector;
+use log::info;
 use native_tls::TlsConnector;
 use tokio::net::TcpStream;
 use tokio_tls::{TlsConnector as AsyncTlsConnector, TlsStream};
@@ -199,29 +200,43 @@ impl Connect for MatrixConnector {
                 .await?;
 
             for endpoint in endpoints {
-                let tcp =
-                    TcpStream::connect((&endpoint.host as &str, endpoint.port))
-                        .await?;
-
-                let connector: AsyncTlsConnector =
-                    if dst.host().contains("localhost") {
-                        TlsConnector::builder()
-                            .danger_accept_invalid_certs(true)
-                            .build()?
-                            .into()
-                    } else {
-                        TlsConnector::new().unwrap().into()
-                    };
-
-                let tls = connector.connect(&endpoint.tls_name, tcp).await?;
-
-                let connected = Connected::new();
-
-                return Ok((tls, connected));
+                match try_connecting(&dst, &endpoint).await {
+                    Ok(r) => return Ok(r),
+                    Err(e) => info!(
+                        "Failed to connect to {} via {}:{} because {}",
+                        dst.host(),
+                        endpoint.host,
+                        endpoint.port,
+                        e,
+                    ),
+                }
             }
 
             Err(format_err!("help"))
         }
         .boxed()
     }
+}
+
+async fn try_connecting(
+    dst: &Destination,
+    endpoint: &Endpoint,
+) -> Result<(TlsStream<TcpStream>, Connected), Error> {
+    let tcp =
+        TcpStream::connect((&endpoint.host as &str, endpoint.port)).await?;
+
+    let connector: AsyncTlsConnector = if dst.host().contains("localhost") {
+        TlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .build()?
+            .into()
+    } else {
+        TlsConnector::new().unwrap().into()
+    };
+
+    let tls = connector.connect(&endpoint.tls_name, tcp).await?;
+
+    let connected = Connected::new();
+
+    Ok((tls, connected))
 }
