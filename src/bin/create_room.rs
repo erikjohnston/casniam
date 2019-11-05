@@ -7,12 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use failure::Error;
 use failure::ResultExt as _;
-use futures::compat::Future01CompatExt;
-use futures::{FutureExt, TryFutureExt};
-use futures_util::try_stream::TryStreamExt;
+use futures::FutureExt;
 use http_service::Body;
 use http_service::HttpService;
-use hyper::server::accept::Accept;
 use log::info;
 use percent_encoding::percent_decode_str;
 use rand::distributions::Alphanumeric;
@@ -559,19 +556,6 @@ async fn main() -> std::io::Result<()> {
 
     let server_name = "localhost:9999".to_string();
 
-    let mut ssl_builder = openssl::ssl::SslAcceptor::mozilla_intermediate(
-        openssl::ssl::SslMethod::tls(),
-    )
-    .unwrap();
-
-    ssl_builder
-        .set_certificate_file("cert.crt", openssl::ssl::SslFiletype::PEM)
-        .unwrap();
-
-    ssl_builder
-        .set_private_key_file("cert.key", openssl::ssl::SslFiletype::PEM)
-        .unwrap();
-
     let (pubkey, secret_key) = sign::gen_keypair();
     let key_id = format!(
         "ed25519:{}",
@@ -596,12 +580,6 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(fut.map(|_| ()));
 
     let federation_sender = {
-        let mut ssl_builder =
-            openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
-                .unwrap();
-
-        ssl_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
-
         let client = hyper::Client::builder()
             .build(MatrixConnector::with_resolver(resolver));
 
@@ -799,7 +777,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     loop {
-        let (stream, remote_addr) = listener.accept().await.unwrap();
+        let (stream, _remote_addr) = listener.accept().await.unwrap();
         let tls_stream = acceptor.accept(stream).await.unwrap();
 
         let fut = http_config.serve_connection(tls_stream, new_service());
