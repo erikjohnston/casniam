@@ -144,6 +144,8 @@ async fn get_well_known<C: Connect + 'static>(
     http_client: &Client<C>,
     host: &str,
 ) -> Option<WellKnownServer> {
+    // TODO: Add timeout.
+
     let uri = hyper::Uri::builder()
         .scheme("https")
         .authority(host)
@@ -202,6 +204,8 @@ impl Connect for MatrixConnector {
             for endpoint in endpoints {
                 match try_connecting(&dst, &endpoint).await {
                     Ok(r) => return Ok(r),
+                    // Errors here are not unexpected, and we just move on
+                    // with our lives.
                     Err(e) => info!(
                         "Failed to connect to {} via {}:{} because {}",
                         dst.host(),
@@ -218,6 +222,7 @@ impl Connect for MatrixConnector {
     }
 }
 
+/// Attempts to connect to a particular endpoint.
 async fn try_connecting(
     dst: &Destination,
     endpoint: &Endpoint,
