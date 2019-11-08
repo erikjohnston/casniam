@@ -553,6 +553,7 @@ impl AppData {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
+    // let _guard = slog_envlogger::init().unwrap();
 
     let server_name = "localhost:9999".to_string();
 
@@ -609,7 +610,7 @@ async fn main() -> std::io::Result<()> {
 
     let mut app = tide::App::with_state(app_data);
 
-    app.middleware(tide::middleware::RootLogger::new());
+    app.middleware(MiddlewareLogger);
 
     app.at("/_matrix/key/v2/server").get(key_render);
     app.at("/_matrix/key/v2/server/:key*").get(key_render);
@@ -726,10 +727,6 @@ async fn main() -> std::io::Result<()> {
         },
     );
 
-    // .bind_ssl("127.0.0.1:9999", ssl_builder)?
-
-    // app.serve("127.0.0.1:8088")
-
     let mut file = File::open("identity.pfx").unwrap();
     let mut identity = vec![];
     file.read_to_end(&mut identity).unwrap();
@@ -778,10 +775,47 @@ async fn main() -> std::io::Result<()> {
 
     loop {
         let (stream, _remote_addr) = listener.accept().await.unwrap();
-        let tls_stream = acceptor.accept(stream).await.unwrap();
 
-        let fut = http_config.serve_connection(tls_stream, new_service());
+        // TODO: there's probably a better way around this.
+        let http_config = http_config.clone();
+        let acceptor = acceptor.clone();
+        let new_service = new_service.clone();
 
-        tokio::spawn(fut.map(|_| ()));
+        tokio::spawn(
+            async move {
+                let tls_stream = acceptor.accept(stream).await?;
+                http_config
+                    .serve_connection(tls_stream, new_service())
+                    .await?;
+                Ok(()) as Result<(), failure::Error>
+            }
+            .map(|_| ()),
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct MiddlewareLogger;
+
+/// Stores information during request phase and logs information once the response
+/// is generated.
+impl<Data: Send + Sync + 'static> tide::middleware::Middleware<Data>
+    for MiddlewareLogger
+{
+    fn handle<'a>(
+        &'a self,
+        cx: tide::Context<Data>,
+        next: tide::middleware::Next<'a, Data>,
+    ) -> futures::future::BoxFuture<'a, tide::Response> {
+        async {
+            let path = cx.uri().path().to_owned();
+            let method = cx.method().as_str().to_owned();
+
+            let res = next.run(cx).await;
+            let status = res.status();
+            info!("{} {} {}", method, path, status.as_str());
+            res
+        }
+        .boxed()
     }
 }

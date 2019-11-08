@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use std::iter;
 use std::mem::swap;
 
-
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;

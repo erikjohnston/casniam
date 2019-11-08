@@ -21,6 +21,7 @@ use failure::Error;
 pub mod auth_rules;
 pub mod client;
 pub mod events;
+pub mod federation_api;
 pub mod json;
 pub mod server_keys;
 pub mod server_resolver;

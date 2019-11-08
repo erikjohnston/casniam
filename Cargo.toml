@@ -33,6 +33,8 @@ futures-util-preview = "0.3.0-alpha.19"
 bytes = "0.4.12"
 percent-encoding = "2.1.0"
 serde_derive = "1.0.102"
+slog-stdlog = "4.0.0"
+slog-envlogger = "2.2.0"
 
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
