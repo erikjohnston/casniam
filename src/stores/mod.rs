@@ -12,38 +12,48 @@ use futures::FutureExt;
 pub mod backed;
 pub mod memory;
 
-pub trait EventStore: Send + Sync + Clone + 'static {
-    type Event: Event + Send;
-    type RoomState: RoomState + Send + Sync;
-    type RoomVersion: RoomVersion<Event = Self::Event>;
-
+pub trait EventStore<R: RoomVersion, S: RoomState>:
+    Send + Sync + 'static
+{
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
-    ) -> BoxFuture<Result<(), Error>>;
+        events: impl IntoIterator<Item = (R::Event, S)>,
+    ) -> BoxFuture<Result<(), Error>>
+    where
+        Self: Sized;
 
     fn insert_event(
         &self,
-        event: Self::Event,
-        state: Self::RoomState,
-    ) -> BoxFuture<Result<(), Error>> {
+        event: R::Event,
+        state: S,
+    ) -> BoxFuture<Result<(), Error>>
+    where
+        Self: Sized,
+    {
         self.insert_events(iter::once((event, state)))
     }
 
     fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
         &self,
         event_ids: I,
-    ) -> BoxFuture<Result<Vec<String>, Error>>;
+    ) -> BoxFuture<Result<Vec<String>, Error>>
+    where
+        Self: Sized;
 
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> BoxFuture<Result<Vec<Self::Event>, Error>>;
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
+    where
+        Self: Sized;
 
     fn get_event(
         &self,
         event_id: impl AsRef<str>,
-    ) -> BoxFuture<Result<Option<Self::Event>, Error>> {
+    ) -> BoxFuture<Result<Option<R::Event>, Error>>
+    where
+        Self: Sized,
+    {
         self.get_events(iter::once(event_id))
             .map(|r| r.map(|v| v.into_iter().next()))
             .boxed()
@@ -52,12 +62,17 @@ pub trait EventStore: Send + Sync + Clone + 'static {
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>>;
+    ) -> BoxFuture<Result<Option<S>, Error>>
+    where
+        Self: Sized;
 
     fn get_conflicted_auth_chain(
         &self,
         event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
+    where
+        Self: Sized,
+    {
         let store = self.clone();
 
         let event_ids: Vec<Vec<String>> = event_ids
@@ -128,7 +143,10 @@ pub trait EventStore: Send + Sync + Clone + 'static {
         &self,
         event_ids: Vec<String>,
         limit: usize,
-    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
+    where
+        Self: Sized,
+    {
         let database = self.clone();
 
         async move {
@@ -158,20 +176,20 @@ pub trait EventStore: Send + Sync + Clone + 'static {
     }
 }
 
-pub trait RoomStore: Clone + 'static {
-    type Event: Event;
-
+pub trait RoomStore<E: Event> {
     /// Insert non-rejected events that should be used for calculating forward
     /// extremities.
     fn insert_new_events(
         &self,
-        events: impl IntoIterator<Item = Self::Event>,
-    ) -> BoxFuture<Result<(), Error>>;
+        events: impl IntoIterator<Item = E>,
+    ) -> BoxFuture<Result<(), Error>>
+    where
+        Self: Sized;
 
-    fn insert_new_event(
-        &self,
-        event: Self::Event,
-    ) -> BoxFuture<Result<(), Error>> {
+    fn insert_new_event(&self, event: E) -> BoxFuture<Result<(), Error>>
+    where
+        Self: Sized,
+    {
         self.insert_new_events(iter::once(event))
     }
 

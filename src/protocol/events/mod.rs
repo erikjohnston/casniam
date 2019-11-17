@@ -3,7 +3,7 @@ pub mod v3;
 
 use failure::Error;
 
-use crate::protocol::{Event, RoomVersion};
+use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::stores::EventStore;
 
 #[derive(Clone, Debug)]
@@ -60,7 +60,7 @@ impl EventBuilder {
         self
     }
 
-    pub async fn build<R: RoomVersion, E: EventStore<Event = R::Event>>(
+    pub async fn build<R: RoomVersion, S: RoomState, E: EventStore<R, S>>(
         self,
         event_store: &E,
     ) -> Result<R::Event, Error> {

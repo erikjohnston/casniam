@@ -55,19 +55,15 @@ where
     }
 }
 
-impl<R, S> EventStore for MemoryEventStore<R, S>
+impl<R, S> EventStore<R, S> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
     S: RoomState + Send + Sync + 'static,
 {
-    type Event = R::Event;
-    type RoomState = S;
-    type RoomVersion = R;
-
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+        events: impl IntoIterator<Item = (R::Event, S)>,
     ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
@@ -98,7 +94,7 @@ where
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
@@ -114,9 +110,8 @@ where
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
-        let mut states: Vec<Self::RoomState> =
-            Vec::with_capacity(event_ids.len());
+    ) -> BoxFuture<Result<Option<S>, Error>> {
+        let mut states: Vec<S> = Vec::with_capacity(event_ids.len());
 
         {
             let store = self.0.read().expect("Mutex poisoned");
@@ -126,8 +121,7 @@ where
                 if let (Some(state), Some(event)) =
                     (store.state_map.get(e_id), store.event_map.get(e_id))
                 {
-                    let mut state_ids: Self::RoomState =
-                        state.clone().into_iter().collect();
+                    let mut state_ids: S = state.clone().into_iter().collect();
 
                     // Since we're getting the resolved state we need to add the
                     // event itself if its a state event.
@@ -158,17 +152,15 @@ where
     }
 }
 
-impl<R, S> RoomStore for MemoryEventStore<R, S>
+impl<R, S> RoomStore<R::Event> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
     S: RoomState + 'static,
 {
-    type Event = R::Event;
-
     fn insert_new_events(
         &self,
-        events: impl IntoIterator<Item = Self::Event>,
+        events: impl IntoIterator<Item = R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 

@@ -1,38 +1,46 @@
-use crate::protocol::{Event, RoomStateResolver, RoomVersion};
+use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::stores::memory::{new_memory_store, MemoryEventStore};
 use crate::stores::EventStore;
 
 use failure::Error;
 use futures::future::BoxFuture;
-use futures::{FutureExt};
+use futures::FutureExt;
 
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
-
 #[derive(Clone)]
-pub struct BackedStore<S: EventStore> {
-    store: S,
-    memory: MemoryEventStore<S::RoomVersion, S::RoomState>,
+pub struct BackedStore<R, S, ES>
+where
+    R: RoomVersion,
+    S: RoomState,
+{
+    store: ES,
+    memory: MemoryEventStore<R, S>,
 }
 
-impl<S: EventStore> BackedStore<S> {
-    pub fn new(store: S) -> BackedStore<S> {
+impl<R, S, ES> BackedStore<R, S, ES>
+where
+    R: RoomVersion,
+    S: RoomState,
+{
+    pub fn new(store: ES) -> BackedStore<R, S, ES> {
         BackedStore {
             store,
-            memory: new_memory_store::<S::RoomVersion, S::RoomState>(),
+            memory: new_memory_store::<R, S>(),
         }
     }
 }
 
-impl<S: EventStore> EventStore for BackedStore<S> {
-    type Event = S::Event;
-    type RoomState = S::RoomState;
-    type RoomVersion = S::RoomVersion;
-
+impl<R, S, ES> EventStore<R, S> for BackedStore<R, S, ES>
+where
+    R: RoomVersion,
+    S: RoomState,
+    ES: EventStore<R, S> + Clone,
+{
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+        events: impl IntoIterator<Item = (R::Event, S)>,
     ) -> BoxFuture<Result<(), Error>> {
         self.memory.insert_events(events)
     }
@@ -63,7 +71,7 @@ impl<S: EventStore> EventStore for BackedStore<S> {
     fn get_events(
         &self,
         event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> = event_ids
@@ -91,7 +99,7 @@ impl<S: EventStore> EventStore for BackedStore<S> {
     fn get_state_for<T: AsRef<str>>(
         &self,
         event_ids: &[T],
-    ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
+    ) -> BoxFuture<Result<Option<S>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> =
@@ -104,8 +112,9 @@ impl<S: EventStore> EventStore for BackedStore<S> {
                 if let Some(s) = store.memory.get_state_for(&[event_id]).await?
                 {
                     states.push(s.into_iter().collect());
-                }
-                else if let Some(s) = store.store.get_state_for(&[event_id]).await? {
+                } else if let Some(s) =
+                    store.store.get_state_for(&[event_id]).await?
+                {
                     states.push(s);
                 } else {
                     // We couldn't find one of the event IDs, so we bail.
@@ -113,8 +122,7 @@ impl<S: EventStore> EventStore for BackedStore<S> {
                 }
             }
 
-            let state =
-                <<S as EventStore>::RoomVersion as RoomVersion>::State::resolve_state(states, &store).await?;
+            let state = R::State::resolve_state(states, &store).await?;
             Ok(Some(state))
         }
         .boxed()

@@ -12,6 +12,12 @@ pub enum FederationAPIError {
     Error(Error),
 }
 
+impl From<Error> for FederationAPIError {
+    fn from(err: Error) -> FederationAPIError {
+        FederationAPIError::Error(err)
+    }
+}
+
 pub type FederationResult<T> = Result<T, FederationAPIError>;
 
 pub trait FederationAPI {
@@ -42,7 +48,7 @@ pub trait FederationAPI {
 
 #[derive(Serialize)]
 pub struct MakeJoinResponse<E: Serialize> {
-    room_version: String,
+    room_version: &'static str,
     event: E,
 }
 

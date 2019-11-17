@@ -3,29 +3,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::marker::PhantomData;
 
-
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use petgraph::{graphmap::DiGraphMap, Direction};
 use serde_json::Value;
 
-use crate::protocol::{AuthRules, Event, RoomState, RoomStateResolver};
+use crate::protocol::{
+    AuthRules, Event, RoomState, RoomStateResolver, RoomVersion,
+};
 use crate::stores::EventStore;
 
-pub struct RoomStateResolverV2<A> {
-    _auth: PhantomData<A>,
+pub struct RoomStateResolverV2<R> {
+    _room_version: PhantomData<R>,
 }
 
-impl<A> RoomStateResolver for RoomStateResolverV2<A>
+impl<R> RoomStateResolver for RoomStateResolverV2<R>
 where
-    A: AuthRules,
+    R: RoomVersion,
 {
-    type Auth = A;
+    type RoomVersion = R;
 
     fn resolve_state<S: RoomState>(
         states: Vec<S>,
-        store: &impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
+        store: &(impl EventStore<R, S> + Clone),
     ) -> BoxFuture<Result<S, Error>> {
         let store = store.clone();
         async move {
@@ -43,7 +44,7 @@ where
             )
             .await?;
 
-            let resolved = iterative_auth_checks::<Self::Auth, _, _>(
+            let resolved = iterative_auth_checks(
                 &conflicted_power_events,
                 &unconflicted,
                 &store,
@@ -53,14 +54,14 @@ where
             let power_level_id =
                 resolved.get("m.room.power_levels", "").unwrap_or_default();
 
-            mainline_ordering::<A, _>(
+            mainline_ordering(
                 &mut conflicted_standard_events,
                 power_level_id,
                 &store,
             )
             .await?;
 
-            let resolved = iterative_auth_checks::<Self::Auth, _, _>(
+            let resolved = iterative_auth_checks(
                 &conflicted_standard_events,
                 &resolved,
                 &store,
@@ -115,10 +116,15 @@ fn get_conflicted_events<S: RoomState>(
     (unconflicted, conflicted)
 }
 
-async fn get_conflicted_set<'a, S: RoomState, ST: EventStore>(
+async fn get_conflicted_set<
+    'a,
+    R: RoomVersion,
+    S: RoomState,
+    ST: EventStore<R, S>,
+>(
     store: &'a ST,
     states: &'a [S],
-) -> Result<(S, Vec<ST::Event>, Vec<ST::Event>, Vec<ST::Event>), Error> {
+) -> Result<(S, Vec<R::Event>, Vec<R::Event>, Vec<R::Event>), Error> {
     let (unconflicted, conflicted_keys) = get_conflicted_events(states);
 
     let mut state_sets = Vec::with_capacity(states.len());
@@ -219,10 +225,15 @@ fn is_power_event(event: &impl Event) -> bool {
     }
 }
 
-async fn sort_by_reverse_topological_power_ordering<'a>(
-    events: &'a mut Vec<impl Event>,
-    auth_diff: &'a [impl Event],
-    store: &'a impl EventStore,
+async fn sort_by_reverse_topological_power_ordering<
+    'a,
+    R: RoomVersion,
+    S: RoomState,
+    ST: EventStore<R, S>,
+>(
+    events: &'a mut Vec<R::Event>,
+    auth_diff: &'a [R::Event],
+    store: &'a ST,
 ) -> Result<(), Error> {
     let auth_diff_map: BTreeMap<_, _> = auth_diff
         .iter()
@@ -274,9 +285,14 @@ async fn sort_by_reverse_topological_power_ordering<'a>(
     Ok(())
 }
 
-async fn get_power_level_for_sender<'a>(
-    event: &'a impl Event,
-    store: &'a impl EventStore,
+async fn get_power_level_for_sender<
+    'a,
+    R: RoomVersion,
+    S: RoomState,
+    ST: EventStore<R, S>,
+>(
+    event: &'a R::Event,
+    store: &'a ST,
 ) -> Result<i64, Error> {
     let auth_events = store.get_events(event.auth_event_ids()).await?;
 
@@ -336,18 +352,18 @@ async fn get_power_level_for_sender<'a>(
 
 async fn iterative_auth_checks<
     'a,
-    A: AuthRules<Event = ST::Event>,
+    R: RoomVersion,
     S: RoomState,
-    ST: EventStore,
+    ST: EventStore<R, S> + Clone,
 >(
-    sorted_events: &'a [ST::Event],
+    sorted_events: &'a [R::Event],
     base_state: &'a S,
     store: &'a ST,
 ) -> Result<S, Error> {
     let mut new_state = base_state.clone();
 
     for event in sorted_events {
-        let types = A::auth_types_for_event(
+        let types = R::Auth::auth_types_for_event(
             event.event_type(),
             event.state_key(),
             event.sender(),
@@ -377,7 +393,7 @@ async fn iterative_auth_checks<
             }
         }
 
-        let result = A::check(event, &auth_map, store).await;
+        let result = R::Auth::check(event, &auth_map, store).await;
 
         if result.is_ok() {
             new_state.add_event(
@@ -396,10 +412,11 @@ async fn iterative_auth_checks<
 
 async fn mainline_ordering<
     'a,
-    A: AuthRules<Event = ST::Event>,
-    ST: EventStore,
+    R: RoomVersion,
+    S: RoomState,
+    ST: EventStore<R, S>,
 >(
-    events: &'a mut Vec<ST::Event>,
+    events: &'a mut Vec<R::Event>,
     resolved_power_id: &'a str,
     store: &'a ST,
 ) -> Result<(), Error> {
@@ -426,8 +443,7 @@ async fn mainline_ordering<
 
     let mut order_map = BTreeMap::new();
     for e in events.iter() {
-        let depth =
-            get_mainline_depth_for_event::<A, _>(e, &mainline, store).await?;
+        let depth = get_mainline_depth_for_event(e, &mainline, store).await?;
         order_map.insert(
             e.event_id().to_string(),
             (depth, e.origin_server_ts(), e.event_id().to_string()),
@@ -442,10 +458,11 @@ async fn mainline_ordering<
 
 async fn get_mainline_depth_for_event<
     'a,
-    A: AuthRules<Event = ST::Event>,
-    ST: EventStore,
+    R: RoomVersion,
+    S: RoomState,
+    ST: EventStore<R, S>,
 >(
-    event: &'a ST::Event,
+    event: &'a R::Event,
     mainline: &'a [String],
     store: &'a ST,
 ) -> Result<usize, Error> {
@@ -506,7 +523,8 @@ mod tests {
 
         builder = builder.with_prev_events(prev_events);
 
-        let event = block_on(builder.build::<RoomVersion3, _>(store)).unwrap();
+        let event =
+            block_on(builder.build::<RoomVersion3, _, _>(store)).unwrap();
 
         if let Some(s) = state_key {
             state.insert(event_type, s, event.event_id().to_string());

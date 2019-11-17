@@ -10,7 +10,7 @@ use futures::Future;
 use serde_json::{self, Value};
 
 use crate::protocol::AuthRules;
-use crate::protocol::{Event, RoomState};
+use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::state_map::StateMap;
 use crate::stores::EventStore;
 
@@ -22,20 +22,20 @@ pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
 }
 
 #[derive(Default)]
-pub struct AuthV1<E> {
-    e: PhantomData<E>,
+pub struct AuthV1<R> {
+    e: PhantomData<R>,
 }
 
-impl<E> AuthRules for AuthV1<E>
+impl<R> AuthRules for AuthV1<R>
 where
-    E: Event + 'static,
+    R: RoomVersion,
 {
-    type Event = E;
+    type RoomVersion = R;
 
-    fn check<'a>(
-        e: &'a Self::Event,
-        s: &'a impl RoomState,
-        store: &'a impl EventStore<Event = E>,
+    fn check<S: RoomState>(
+        e: &R::Event,
+        s: &S,
+        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
         Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
@@ -51,13 +51,13 @@ where
 }
 
 /// Check if the given event parses auth.
-pub async fn check<E, S>(
-    event: E,
+pub async fn check<R, S>(
+    event: R::Event,
     state: S,
-    store: impl EventStore<Event = E>,
+    store: impl EventStore<R, S>,
 ) -> Result<(), Error>
 where
-    E: Event + Clone,
+    R: RoomVersion,
     S: RoomState + Clone,
 {
     let types = auth_types_for_event(

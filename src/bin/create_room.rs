@@ -150,7 +150,7 @@ impl AppData {
                     let mut event = builder
                         .with_prev_events(extrems)
                         .origin(self.server_name.clone())
-                        .build::<R, _>(&database)
+                        .build(&database)
                         .await?;
 
                     event.sign(
@@ -224,7 +224,7 @@ impl AppData {
         })))
         .with_prev_events(prev_events)
         .origin(self.server_name.clone())
-        .build::<R, _>(&database)
+        .build(&database)
         .await?;
 
         event.sign(
@@ -312,7 +312,7 @@ impl AppData {
             let mut event = builder
                 .with_prev_events(prev_events)
                 .origin(self.server_name.clone())
-                .build::<R, _>(&database)
+                .build(&database)
                 .await?;
 
             event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);
@@ -351,7 +351,7 @@ impl AppData {
             let mut event = builder
                 .with_prev_events(prev_events)
                 .origin(self.server_name.clone())
-                .build::<R, _>(&database)
+                .build(&database)
                 .await?;
 
             event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);

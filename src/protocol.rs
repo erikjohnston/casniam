@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Debug;
 use std::iter::FromIterator;
+use std::marker::PhantomData;
 use std::pin::Pin;
 
 use failure::Error;
@@ -73,11 +74,11 @@ where
 }
 
 pub trait RoomStateResolver {
-    type Auth: AuthRules;
+    type RoomVersion: RoomVersion;
 
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
-        store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
+        store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
     ) -> BoxFuture<Result<S, Error>>;
 }
 
@@ -111,12 +112,12 @@ pub trait RoomState:
 }
 
 pub trait AuthRules {
-    type Event: Event;
+    type RoomVersion: RoomVersion;
 
-    fn check(
-        e: &Self::Event,
-        s: &impl RoomState,
-        store: &impl EventStore<Event = Self::Event>,
+    fn check<S: RoomState>(
+        e: &<Self::RoomVersion as RoomVersion>::Event,
+        s: &S,
+        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
     fn auth_types_for_event(
@@ -129,8 +130,8 @@ pub trait AuthRules {
 
 pub trait RoomVersion: Send + Sync + Clone + 'static {
     type Event: Event;
-    type State: RoomStateResolver<Auth = Self::Auth>;
-    type Auth: AuthRules<Event = Self::Event>;
+    type State: RoomStateResolver<RoomVersion = Self>;
+    type Auth: AuthRules<RoomVersion = Self>;
 
     const VERSION: &'static str;
 }
@@ -140,10 +141,8 @@ pub struct RoomVersion3;
 
 impl RoomVersion for RoomVersion3 {
     type Event = events::v2::SignedEventV2;
-    type Auth = auth_rules::AuthV1<events::v2::SignedEventV2>;
-    type State = state::RoomStateResolverV2<
-        auth_rules::AuthV1<events::v2::SignedEventV2>,
-    >;
+    type Auth = auth_rules::AuthV1<Self>;
+    type State = state::RoomStateResolverV2<Self>;
 
     const VERSION: &'static str = "3";
 }
@@ -153,10 +152,8 @@ pub struct RoomVersion4;
 
 impl RoomVersion for RoomVersion4 {
     type Event = events::v3::SignedEventV3;
-    type Auth = auth_rules::AuthV1<events::v3::SignedEventV3>;
-    type State = state::RoomStateResolverV2<
-        auth_rules::AuthV1<events::v3::SignedEventV3>,
-    >;
+    type Auth = auth_rules::AuthV1<Self>;
+    type State = state::RoomStateResolverV2<Self>;
 
     const VERSION: &'static str = "4";
 }
@@ -183,21 +180,26 @@ pub trait FederationTransactionQueue {
     ) -> BoxFuture<()>;
 }
 
-pub struct Handler<E: EventStore> {
-    event_store: E,
+pub struct Handler<R: RoomVersion, S: RoomState, ES: EventStore<R, S>> {
+    event_store: ES,
+    _data: PhantomData<(R, S)>,
     // client: Box<FederationClient>,
 }
 
-impl<ES: EventStore> Handler<ES> {
+impl<R: RoomVersion, S: RoomState, ES: EventStore<R, S> + Clone>
+    Handler<R, S, ES>
+{
     pub fn new(event_store: ES) -> Self {
-        Handler { event_store }
+        Handler {
+            event_store,
+            _data: PhantomData,
+        }
     }
 
     pub async fn handle_chunk(
         &self,
-        chunk: DagChunkFragment<ES::Event>,
-    ) -> Result<Vec<PersistEventInfo<ES::RoomVersion, ES::RoomState>>, Error>
-    {
+        chunk: DagChunkFragment<R::Event>,
+    ) -> Result<Vec<PersistEventInfo<R, S>>, Error> {
         // TODO: This doesn't check signatures/hashes or whether it passes auth
         // checks based on auth events. Nor does it check for soft failures.
         // Former should be checked before we enter here, the latter after.
@@ -218,8 +220,7 @@ impl<ES: EventStore> Handler<ES> {
             }
         }
 
-        let mut event_to_state_after: HashMap<String, ES::RoomState> =
-            HashMap::new();
+        let mut event_to_state_after: HashMap<String, S> = HashMap::new();
 
         for event_id in &missing {
             let state = self.event_store.get_state_for(&[event_id]).await?;
@@ -238,31 +239,26 @@ impl<ES: EventStore> Handler<ES> {
                 .map(|e| event_to_state_after[e as &str].clone())
                 .collect();
 
-            let state_before: ES::RoomState =
-                <<ES as EventStore>::RoomVersion as RoomVersion>::State::resolve_state(states, &store).await?;
+            let state_before: S =
+                R::State::resolve_state(states, &store).await?;
 
             // FIXME: Differentiate between DB and auth errors.
             // TODO: Need to pass previous events to auth check
-            let rejected = match <<ES as EventStore>::RoomVersion as RoomVersion>::Auth::check(
-                &event,
-                &state_before,
-                &store,
-            )
-            .await
-            {
-                Ok(()) => {
-                    info!("Allowed {}", event.event_id());
-                    false
-                }
-                Err(err) => {
-                    info!(
-                        "Denied event {} because: {}",
-                        event.event_type(),
-                        err
-                    );
-                    true
-                }
-            };
+            let rejected =
+                match R::Auth::check(&event, &state_before, &store).await {
+                    Ok(()) => {
+                        info!("Allowed {}", event.event_id());
+                        false
+                    }
+                    Err(err) => {
+                        info!(
+                            "Denied event {} because: {}",
+                            event.event_type(),
+                            err
+                        );
+                        true
+                    }
+                };
 
             let mut state_after = state_before.clone();
             if !rejected {
