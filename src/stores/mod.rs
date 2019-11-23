@@ -12,73 +12,55 @@ use futures::FutureExt;
 pub mod backed;
 pub mod memory;
 
+// Ideally this trait would have lots of generic parameters so that we don't
+// need to do lots of clones and stuff. Alas, we need this to be object safe
+// so that it can be used in trait factories and such.
+
 pub trait EventStore<R: RoomVersion, S: RoomState>:
     Send + Sync + 'static
 {
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (R::Event, S)>,
-    ) -> BoxFuture<Result<(), Error>>
-    where
-        Self: Sized;
+        events: Vec<(R::Event, S)>,
+    ) -> BoxFuture<Result<(), Error>>;
 
     fn insert_event(
         &self,
         event: R::Event,
         state: S,
-    ) -> BoxFuture<Result<(), Error>>
-    where
-        Self: Sized,
-    {
-        self.insert_events(iter::once((event, state)))
+    ) -> BoxFuture<Result<(), Error>> {
+        self.insert_events(vec![(event, state)])
     }
 
-    fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+    fn missing_events(
         &self,
-        event_ids: I,
-    ) -> BoxFuture<Result<Vec<String>, Error>>
-    where
-        Self: Sized;
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Vec<String>, Error>>;
 
     fn get_events(
         &self,
-        event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
-    where
-        Self: Sized;
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>>;
 
     fn get_event(
         &self,
-        event_id: impl AsRef<str>,
-    ) -> BoxFuture<Result<Option<R::Event>, Error>>
-    where
-        Self: Sized,
-    {
-        self.get_events(iter::once(event_id))
+        event_id: &str,
+    ) -> BoxFuture<Result<Option<R::Event>, Error>> {
+        self.get_events(&[event_id])
             .map(|r| r.map(|v| v.into_iter().next()))
             .boxed()
     }
 
-    fn get_state_for<T: AsRef<str>>(
+    fn get_state_for(
         &self,
-        event_ids: &[T],
-    ) -> BoxFuture<Result<Option<S>, Error>>
-    where
-        Self: Sized;
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Option<S>, Error>>;
 
     fn get_conflicted_auth_chain(
         &self,
-        event_ids: Vec<Vec<impl AsRef<str>>>,
-    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
-    where
-        Self: Sized,
-    {
+        event_ids: Vec<Vec<String>>,
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let store = self.clone();
-
-        let event_ids: Vec<Vec<String>> = event_ids
-            .into_iter()
-            .map(|v| v.into_iter().map(|e| e.as_ref().to_string()).collect())
-            .collect();
 
         async move {
             let mut auth_chains: Vec<BTreeSet<String>> =
@@ -143,10 +125,7 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
         &self,
         event_ids: Vec<String>,
         limit: usize,
-    ) -> BoxFuture<Result<Vec<R::Event>, Error>>
-    where
-        Self: Sized,
-    {
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let database = self.clone();
 
         async move {
@@ -154,7 +133,12 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
             let mut to_return = Vec::new();
 
             'top: while !queue.is_empty() {
-                let events = database.get_events(queue.drain(..)).await?;
+                let m: Vec<_> = queue.drain(..).collect();
+                let events = database
+                    .get_events(
+                        &m.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                    )
+                    .await?;
                 for event in events {
                     queue.extend(
                         event
@@ -176,7 +160,7 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
     }
 }
 
-pub trait RoomStore<E: Event> {
+pub trait RoomStore<E: Event>: Send + Sync {
     /// Insert non-rejected events that should be used for calculating forward
     /// extremities.
     fn insert_new_events(

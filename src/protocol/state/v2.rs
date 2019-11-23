@@ -129,7 +129,7 @@ async fn get_conflicted_set<
 
     let mut state_sets = Vec::with_capacity(states.len());
     for state in states {
-        let state_set: Vec<_> = state
+        let state_set: Vec<String> = state
             .borrow()
             .keys()
             .into_iter()
@@ -138,6 +138,7 @@ async fn get_conflicted_set<
                     .contains_key(&(key.0.to_string(), key.1.to_string()))
             })
             .filter_map(|key| state.borrow().get(key.0, key.1))
+            .map(|e| e.to_string())
             .collect();
 
         state_sets.push(state_set);
@@ -153,13 +154,15 @@ async fn get_conflicted_set<
     let mut missing = Vec::new();
     for state_set in state_sets {
         for ev in state_set {
-            if !full_conflicted_set.contains_key(ev) {
+            if !full_conflicted_set.contains_key(&ev) {
                 missing.push(ev);
             }
         }
     }
 
-    let missing_evs = store.get_events(&missing).await?;
+    let missing_evs = store
+        .get_events(&missing.iter().map(|e| e as &str).collect::<Vec<_>>())
+        .await?;
     full_conflicted_set.extend(
         missing_evs
             .into_iter()
@@ -294,7 +297,7 @@ async fn get_power_level_for_sender<
     event: &'a R::Event,
     store: &'a ST,
 ) -> Result<i64, Error> {
-    let auth_events = store.get_events(event.auth_event_ids()).await?;
+    let auth_events = store.get_events(&event.auth_event_ids()).await?;
 
     let mut pl = None;
     let mut create = None;
@@ -370,7 +373,7 @@ async fn iterative_auth_checks<
             event.content(),
         );
 
-        let auth_events = store.get_events(event.auth_event_ids()).await?;
+        let auth_events = store.get_events(&event.auth_event_ids()).await?;
         let mut auth_map = S::new();
         for e in auth_events {
             if let Some(state_key) = e.state_key() {
@@ -427,7 +430,7 @@ async fn mainline_ordering<
         mainline.push(p.clone());
         if let Some(power_ev) = store.get_event(&p).await? {
             let auth_events =
-                store.get_events(power_ev.auth_event_ids()).await?;
+                store.get_events(&power_ev.auth_event_ids()).await?;
             for auth_event in auth_events {
                 if (auth_event.event_type(), auth_event.state_key())
                     == ("m.room.power_levels", Some(""))
@@ -475,7 +478,8 @@ async fn get_mainline_depth_for_event<
             return Ok(pos);
         }
 
-        let auth_events = store.get_events(curr_event.auth_event_ids()).await?;
+        let auth_events =
+            store.get_events(&curr_event.auth_event_ids()).await?;
         for auth_event in auth_events {
             if (auth_event.event_type(), auth_event.state_key())
                 == ("m.room.power_levels", Some(""))

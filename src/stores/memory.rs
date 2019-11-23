@@ -63,7 +63,7 @@ where
 {
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (R::Event, S)>,
+        events: Vec<(R::Event, S)>,
     ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
@@ -75,16 +75,16 @@ where
         future::ok(()).boxed()
     }
 
-    fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+    fn missing_events(
         &self,
-        event_ids: I,
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Vec<String>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
                 .into_iter()
-                .filter(|e| !store.event_map.contains_key(e.as_ref()))
+                .filter(|e| !store.event_map.contains_key(**e))
                 .map(|e| e.to_string())
                 .collect(),
         )
@@ -93,33 +93,31 @@ where
 
     fn get_events(
         &self,
-        event_ids: impl IntoIterator<Item = impl AsRef<str>>,
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let store = self.0.read().expect("Mutex poisoned");
 
         future::ok(
             event_ids
                 .into_iter()
-                .filter_map(|e| store.event_map.get(e.as_ref()))
+                .filter_map(|e| store.event_map.get(*e))
                 .cloned()
                 .collect(),
         )
         .boxed()
     }
 
-    fn get_state_for<T: AsRef<str>>(
+    fn get_state_for(
         &self,
-        event_ids: &[T],
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Option<S>, Error>> {
         let mut states: Vec<S> = Vec::with_capacity(event_ids.len());
 
         {
             let store = self.0.read().expect("Mutex poisoned");
             for e_id in event_ids {
-                let e_id = e_id.as_ref();
-
                 if let (Some(state), Some(event)) =
-                    (store.state_map.get(e_id), store.event_map.get(e_id))
+                    (store.state_map.get(*e_id), store.event_map.get(*e_id))
                 {
                     let mut state_ids: S = state.clone().into_iter().collect();
 

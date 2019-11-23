@@ -60,19 +60,37 @@ impl EventBuilder {
         self
     }
 
-    pub async fn build<R: RoomVersion, S: RoomState, E: EventStore<R, S>>(
+    pub async fn build<
+        R: RoomVersion,
+        S: RoomState,
+        E: EventStore<R, S> + ?Sized,
+    >(
         self,
         event_store: &E,
     ) -> Result<R::Event, Error> {
         // TODO: Only pull out a subset of the state needed.
         let state = event_store
-            .get_state_for(&self.prev_events)
+            .get_state_for(
+                &self
+                    .prev_events
+                    .iter()
+                    .map(|e| e as &str)
+                    .collect::<Vec<_>>(),
+            )
             .await?
             .ok_or_else(|| {
                 format_err!("No state for prev events: {:?}", &self.prev_events)
             })?;
 
-        let prev_events = event_store.get_events(&self.prev_events).await?;
+        let prev_events = event_store
+            .get_events(
+                &self
+                    .prev_events
+                    .iter()
+                    .map(|e| e as &str)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
 
         let event =
             R::Event::from_builder::<R, _>(self, state, prev_events).await?;

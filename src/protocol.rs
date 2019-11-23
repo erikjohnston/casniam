@@ -209,7 +209,9 @@ impl<R: RoomVersion, S: RoomState, ES: EventStore<R, S> + Clone>
         if !missing.is_empty() {
             let unknown_events = self
                 .event_store
-                .missing_events(missing.iter().map(|e| e as &str))
+                .missing_events(
+                    &missing.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                )
                 .await?;
 
             if !unknown_events.is_empty() {

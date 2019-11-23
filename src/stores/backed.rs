@@ -40,27 +40,35 @@ where
 {
     fn insert_events(
         &self,
-        events: impl IntoIterator<Item = (R::Event, S)>,
+        events: Vec<(R::Event, S)>,
     ) -> BoxFuture<Result<(), Error>> {
         self.memory.insert_events(events)
     }
 
-    fn missing_events<I: IntoIterator<Item = impl AsRef<str> + ToString>>(
+    fn missing_events(
         &self,
-        event_ids: I,
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Vec<String>, Error>> {
         let store = self.clone();
 
-        let event_ids: Vec<_> = event_ids
-            .into_iter()
-            .map(|e| e.as_ref().to_string())
-            .collect();
+        let event_ids: Vec<_> =
+            event_ids.into_iter().map(|e| e.to_string()).collect();
 
         async move {
-            let mut missing = store.memory.missing_events(event_ids).await?;
+            let mut missing = store
+                .memory
+                .missing_events(
+                    &event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                )
+                .await?;
 
             if !missing.is_empty() {
-                missing = store.store.missing_events(missing).await?;
+                missing = store
+                    .store
+                    .missing_events(
+                        &missing.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                    )
+                    .await?;
             }
 
             Ok(missing)
@@ -70,17 +78,20 @@ where
 
     fn get_events(
         &self,
-        event_ids: impl IntoIterator<Item = impl AsRef<str>>,
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         let store = self.clone();
 
-        let event_ids: Vec<_> = event_ids
-            .into_iter()
-            .map(|e| e.as_ref().to_string())
-            .collect();
+        let event_ids: Vec<_> =
+            event_ids.into_iter().map(|e| e.to_string()).collect();
 
         async move {
-            let mut events = store.memory.get_events(&event_ids).await?;
+            let mut events = store
+                .memory
+                .get_events(
+                    &event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                )
+                .await?;
 
             let mut missing = BTreeSet::from_iter(event_ids);
             for e in &events {
@@ -88,7 +99,17 @@ where
             }
 
             if !missing.is_empty() {
-                events.append(&mut store.store.get_events(missing).await?);
+                events.append(
+                    &mut store
+                        .store
+                        .get_events(
+                            &missing
+                                .iter()
+                                .map(|e| e as &str)
+                                .collect::<Vec<_>>(),
+                        )
+                        .await?,
+                );
             }
 
             Ok(events)
@@ -96,14 +117,14 @@ where
         .boxed()
     }
 
-    fn get_state_for<T: AsRef<str>>(
+    fn get_state_for(
         &self,
-        event_ids: &[T],
+        event_ids: &[&str],
     ) -> BoxFuture<Result<Option<S>, Error>> {
         let store = self.clone();
 
         let event_ids: Vec<_> =
-            event_ids.iter().map(|e| e.as_ref().to_string()).collect();
+            event_ids.iter().map(|e| e.to_string()).collect();
 
         async move {
             let mut states = Vec::with_capacity(event_ids.len());

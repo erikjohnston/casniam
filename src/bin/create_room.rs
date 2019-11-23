@@ -106,9 +106,14 @@ impl AppData {
             let stuff = handler.handle_chunk(chunk).await?;
 
             database
-                .insert_events(stuff.iter().map(|info| {
-                    (info.event.clone(), info.state_before.clone())
-                }))
+                .insert_events(
+                    stuff
+                        .iter()
+                        .map(|info| {
+                            (info.event.clone(), info.state_before.clone())
+                        })
+                        .collect(),
+                )
                 .await?;
 
             database
@@ -134,8 +139,15 @@ impl AppData {
                         .unwrap()
                         .to_string();
 
-                    let state =
-                        database.get_state_for(&extrems).await?.unwrap();
+                    let state = database
+                        .get_state_for(
+                            &extrems
+                                .iter()
+                                .map(|e| e as &str)
+                                .collect::<Vec<_>>(),
+                        )
+                        .await?
+                        .unwrap();
                     let builder = EventBuilder::new(
                         &room_id,
                         &creator,
@@ -276,7 +288,9 @@ impl AppData {
         }
 
         let state = database.get_state_for(&[&event_id]).await?.unwrap();
-        let state_events = database.get_events(state.values()).await?;
+        let state_events = database
+            .get_events(&state.values().map(|e| e as &str).collect::<Vec<_>>())
+            .await?;
 
         let resp = tide::response::json(json!([200, {
             "origin": self.server_name,
@@ -307,7 +321,9 @@ impl AppData {
             let prev_events: Vec<_> = database.get_forward_extremities(room_id.clone()).await?.into_iter().collect();
 
             let state =
-                database.get_state_for(&prev_events).await?.unwrap();
+                database.get_state_for(&prev_events.iter()
+                                .map(|e| e as &str)
+                                .collect::<Vec<_>>()).await?.unwrap();
 
             let mut event = builder
                 .with_prev_events(prev_events)
@@ -346,7 +362,9 @@ impl AppData {
 
             let prev_events = vec![event.event_id().to_string()];
             let state =
-                database.get_state_for(&prev_events).await?.unwrap();
+                database.get_state_for(&prev_events.iter()
+                .map(|e| e as &str)
+                .collect::<Vec<_>>()).await?.unwrap();
 
             let mut event = builder
                 .with_prev_events(prev_events)
@@ -396,9 +414,18 @@ impl AppData {
             .into_iter()
             .collect();
 
-        let mut prev_events = database.get_events(&prev_event_ids).await?;
+        let mut prev_events = database
+            .get_events(
+                &prev_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
+            )
+            .await?;
 
-        let mut state = database.get_state_for(&prev_event_ids).await?.unwrap();
+        let mut state = database
+            .get_state_for(
+                &prev_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
+            )
+            .await?
+            .unwrap();
 
         for builder in builders {
             info!("Prev events for new chunk: {:?}", &prev_event_ids);
@@ -454,7 +481,8 @@ impl AppData {
         database.insert_events(
             stuff
                 .iter()
-                .map(|info| (info.event.clone(), info.state_before.clone())),
+                .map(|info| (info.event.clone(), info.state_before.clone()))
+                .collect(),
         );
 
         // TODO: Do we need to clone?

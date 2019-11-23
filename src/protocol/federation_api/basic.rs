@@ -42,9 +42,9 @@ where
         let event_store = self.stores.get_event_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
-        async {
+        async move {
             let prev_event_ids = room_store
-                .get_forward_extremities(room_id)
+                .get_forward_extremities(room_id.clone())
                 .await?
                 .into_iter()
                 .collect();
