@@ -1,12 +1,9 @@
-use anymap::any::Any;
 use futures_util::future::FutureExt;
 use serde_json::json;
-
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use sodiumoxide::crypto::sign::SecretKey;
 
 use crate::protocol::events::EventBuilder;
-use crate::protocol::{RoomState, RoomVersion};
+use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::state_map::StateMap;
 use crate::stores::{EventStore, RoomStore};
 
@@ -28,11 +25,14 @@ pub trait StoreFactory<S: RoomState> {
 
 pub struct StandardFederationAPI<F> {
     stores: F,
+    server_name: String,
+    key_id: String,
+    secret_key: SecretKey,
 }
 
 impl<F> FederationAPI for StandardFederationAPI<F>
 where
-    F: StoreFactory<StateMap<String>>,
+    F: StoreFactory<StateMap<String>> + Sized + Send + Sync,
 {
     fn on_make_join<R: RoomVersion>(
         &self,
@@ -59,15 +59,15 @@ where
                 "membership": "join",
             })))
             .with_prev_events(prev_event_ids)
-            // .origin(self.server_name.clone())
+            .origin(self.server_name.clone())
             .build(event_store)
             .await?;
 
-            // event.sign(
-            //     self.server_name.clone(),
-            //     self.key_id.clone(),
-            //     &self.secret_key,
-            // );
+            event.sign(
+                self.server_name.clone(),
+                self.key_id.clone(),
+                &self.secret_key,
+            );
 
             Ok(MakeJoinResponse {
                 event: event,
@@ -75,52 +75,28 @@ where
             })
         }
         .boxed()
-
-        // let last_event_id = stuff.last().unwrap().event.event_id().to_string();
-
-        // let prev_events = vec![last_event_id];
-
-        // let mut event = EventBuilder::new(
-        //     room_id,
-        //     user_id.clone(),
-        //     "m.room.member".to_string(),
-        //     Some(user_id.clone()),
-        // )
-        // .with_content(to_value(json!({
-        //     "membership": "join",
-        // })))
-        // .with_prev_events(prev_events)
-        // .origin(self.server_name.clone())
-        // .build(&database)
-        // .await?;
-
-        // event.sign(
-        //     self.server_name.clone(),
-        //     self.key_id.clone(),
-        //     &self.secret_key,
-        // );
     }
 
     fn on_send_join<R: RoomVersion>(
         &self,
-        room_id: String,
-        event: R::Event,
+        _room_id: String,
+        _event: R::Event,
     ) -> BoxFuture<FederationResult<SendJoinResponse<R::Event>>> {
         unimplemented!()
     }
 
     fn on_backfill<R: RoomVersion>(
         &self,
-        room_id: String,
-        event_ids: Vec<String>,
-        limit: usize,
+        _room_id: String,
+        _event_ids: Vec<String>,
+        _limit: usize,
     ) -> BoxFuture<FederationResult<BackfillResponse<R::Event>>> {
         unimplemented!()
     }
 
     fn on_send(
         &self,
-        txn: TransactionRequest,
+        _txn: TransactionRequest,
     ) -> BoxFuture<FederationResult<TransactionResponse>> {
         unimplemented!()
     }
