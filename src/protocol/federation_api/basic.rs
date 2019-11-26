@@ -2,9 +2,12 @@ use futures_util::future::FutureExt;
 use serde_json::json;
 use sodiumoxide::crypto::sign::SecretKey;
 
+use anymap::AnyMap;
+
 use crate::protocol::events::EventBuilder;
 use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::state_map::StateMap;
+use crate::stores::memory::MemoryEventStore;
 use crate::stores::{EventStore, RoomStore};
 
 use super::*;
@@ -21,6 +24,48 @@ fn to_value(
 pub trait StoreFactory<S: RoomState> {
     fn get_event_store<R: RoomVersion>(&self) -> &dyn EventStore<R, S>;
     fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event>;
+}
+
+#[derive(Debug)]
+pub struct MemoryStoreFactory {
+    stores: AnyMap,
+}
+
+impl MemoryStoreFactory {
+    pub fn new() -> MemoryStoreFactory {
+        MemoryStoreFactory {
+            stores: AnyMap::new(),
+        }
+    }
+
+    pub fn add<R: RoomVersion>(
+        &mut self,
+        store: MemoryEventStore<R, StateMap<String>>,
+    ) {
+        self.stores.insert(store);
+    }
+}
+
+impl Default for MemoryStoreFactory {
+    fn default() -> MemoryStoreFactory {
+        MemoryStoreFactory::new()
+    }
+}
+
+impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
+    fn get_event_store<R: RoomVersion>(
+        &self,
+    ) -> &dyn EventStore<R, StateMap<String>> {
+        self.stores
+            .get::<MemoryEventStore<R, StateMap<String>>>()
+            .unwrap()
+    }
+
+    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event> {
+        self.stores
+            .get::<MemoryEventStore<R, StateMap<String>>>()
+            .unwrap()
+    }
 }
 
 pub struct StandardFederationAPI<F> {
@@ -70,7 +115,7 @@ where
             );
 
             Ok(MakeJoinResponse {
-                event: event,
+                event,
                 room_version: R::VERSION,
             })
         }
