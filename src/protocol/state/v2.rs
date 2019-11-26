@@ -504,7 +504,7 @@ mod tests {
 
     use futures::executor::block_on;
 
-    use std::iter::once;
+    
 
     fn create_event(
         store: &MemoryEventStore<RoomVersion3, StateMap<String>>,

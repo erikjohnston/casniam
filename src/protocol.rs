@@ -615,8 +615,8 @@ mod tests {
         type RoomVersion = DummyVersion;
 
         fn resolve_state<'a, S: RoomState>(
-            states: Vec<S>,
-            store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
+            _states: Vec<S>,
+            _store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
         ) -> BoxFuture<Result<S, Error>> {
             Box::pin(future::ok(S::new()))
         }
@@ -628,9 +628,9 @@ mod tests {
         type RoomVersion = DummyVersion;
 
         fn check<S: RoomState>(
-            e: &<Self::RoomVersion as RoomVersion>::Event,
-            s: &S,
-            store: &(impl EventStore<Self::RoomVersion, S> + Clone),
+            _e: &<Self::RoomVersion as RoomVersion>::Event,
+            _s: &S,
+            _store: &(impl EventStore<Self::RoomVersion, S> + Clone),
         ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
             Box::pin(future::ok(()))
         }
@@ -662,28 +662,28 @@ mod tests {
     impl EventStore<DummyVersion, StateMap<String>> for DummyStore {
         fn insert_events(
             &self,
-            events: Vec<(TestEvent, StateMap<String>)>,
+            _events: Vec<(TestEvent, StateMap<String>)>,
         ) -> BoxFuture<Result<(), Error>> {
             unimplemented!()
         }
 
         fn missing_events(
             &self,
-            event_ids: &[&str],
+            _event_ids: &[&str],
         ) -> BoxFuture<Result<Vec<String>, Error>> {
             unimplemented!()
         }
 
         fn get_events(
             &self,
-            event_ids: &[&str],
+            _event_ids: &[&str],
         ) -> BoxFuture<Result<Vec<TestEvent>, Error>> {
             unimplemented!()
         }
 
         fn get_state_for(
             &self,
-            event_ids: &[&str],
+            _event_ids: &[&str],
         ) -> BoxFuture<Result<Option<StateMap<String>>, Error>> {
             unimplemented!()
         }
