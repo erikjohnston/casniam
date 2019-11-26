@@ -2,13 +2,12 @@ use futures_util::future::FutureExt;
 use serde_json::json;
 use sodiumoxide::crypto::sign::SecretKey;
 
-use anymap::AnyMap;
-
 use crate::protocol::events::EventBuilder;
-use crate::protocol::{Event, RoomState, RoomVersion};
+use crate::protocol::{
+    DagChunkFragment, Event, Handler, RoomState, RoomVersion,
+};
 use crate::state_map::StateMap;
-use crate::stores::memory::MemoryEventStore;
-use crate::stores::{EventStore, RoomStore};
+use crate::stores::{EventStore, RoomStore, StoreFactory};
 
 use super::*;
 
@@ -21,53 +20,6 @@ fn to_value(
     }
 }
 
-pub trait StoreFactory<S: RoomState> {
-    fn get_event_store<R: RoomVersion>(&self) -> &dyn EventStore<R, S>;
-    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event>;
-}
-
-#[derive(Debug)]
-pub struct MemoryStoreFactory {
-    stores: AnyMap,
-}
-
-impl MemoryStoreFactory {
-    pub fn new() -> MemoryStoreFactory {
-        MemoryStoreFactory {
-            stores: AnyMap::new(),
-        }
-    }
-
-    pub fn add<R: RoomVersion>(
-        &mut self,
-        store: MemoryEventStore<R, StateMap<String>>,
-    ) {
-        self.stores.insert(store);
-    }
-}
-
-impl Default for MemoryStoreFactory {
-    fn default() -> MemoryStoreFactory {
-        MemoryStoreFactory::new()
-    }
-}
-
-impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
-    fn get_event_store<R: RoomVersion>(
-        &self,
-    ) -> &dyn EventStore<R, StateMap<String>> {
-        self.stores
-            .get::<MemoryEventStore<R, StateMap<String>>>()
-            .unwrap()
-    }
-
-    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event> {
-        self.stores
-            .get::<MemoryEventStore<R, StateMap<String>>>()
-            .unwrap()
-    }
-}
-
 pub struct StandardFederationAPI<F> {
     stores: F,
     server_name: String,
@@ -77,7 +29,7 @@ pub struct StandardFederationAPI<F> {
 
 impl<F> FederationAPI for StandardFederationAPI<F>
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync,
+    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
 {
     fn on_make_join<R: RoomVersion>(
         &self,
@@ -124,10 +76,52 @@ where
 
     fn on_send_join<R: RoomVersion>(
         &self,
-        _room_id: String,
-        _event: R::Event,
+        room_id: String,
+        event: R::Event,
     ) -> BoxFuture<FederationResult<SendJoinResponse<R::Event>>> {
-        unimplemented!()
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
+
+        async move {
+            let event_id = event.event_id().to_string();
+
+            let event_origin =
+                event.sender().splitn(2, ':').last().unwrap().to_string();
+
+            let chunk = DagChunkFragment::from_event(event.clone());
+            let handler = Handler::new(self.stores);
+            let mut stuff = handler.handle_chunk::<R>(chunk).await?;
+
+            for info in &mut stuff {
+                assert!(!info.rejected);
+
+                info.event.sign(
+                    self.server_name.clone(),
+                    self.key_id.clone(),
+                    &self.secret_key,
+                );
+
+                event_store
+                    .insert_event(info.event.clone(), info.state_before.clone())
+                    .await?;
+
+                room_store.insert_new_event(info.event.clone()).await?;
+            }
+
+            let state = event_store.get_state_for(&[&event_id]).await?.unwrap();
+            let state_events = event_store
+                .get_events(
+                    &state.values().map(|e| e as &str).collect::<Vec<_>>(),
+                )
+                .await?;
+
+            Ok(SendJoinResponse {
+                origin: self.server_name.clone(),
+                state: state_events.clone(),
+                auth_chain: state_events,
+            })
+        }
+        .boxed()
     }
 
     fn on_backfill<R: RoomVersion>(

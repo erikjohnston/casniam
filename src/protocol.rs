@@ -1,5 +1,5 @@
 use crate::stores::backed::BackedStore;
-use crate::stores::EventStore;
+use crate::stores::{EventStore, StoreFactory};
 
 use futures::future::BoxFuture;
 use futures::future::Future;
@@ -78,7 +78,7 @@ pub trait RoomStateResolver {
 
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
-        store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &'a impl EventStore<Self::RoomVersion, S>,
     ) -> BoxFuture<Result<S, Error>>;
 }
 
@@ -117,7 +117,7 @@ pub trait AuthRules {
     fn check<S: RoomState>(
         e: &<Self::RoomVersion as RoomVersion>::Event,
         s: &S,
-        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &impl EventStore<Self::RoomVersion, S>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
     fn auth_types_for_event(
@@ -180,23 +180,20 @@ pub trait FederationTransactionQueue {
     ) -> BoxFuture<()>;
 }
 
-pub struct Handler<R: RoomVersion, S: RoomState, ES: EventStore<R, S>> {
-    event_store: ES,
-    _data: PhantomData<(R, S)>,
-    // client: Box<FederationClient>,
+pub struct Handler<S: RoomState, F: StoreFactory<S>> {
+    stores: F,
+    _data: PhantomData<S>, // client: Box<FederationClient>,
 }
 
-impl<R: RoomVersion, S: RoomState, ES: EventStore<R, S> + Clone>
-    Handler<R, S, ES>
-{
-    pub fn new(event_store: ES) -> Self {
+impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
+    pub fn new(stores: F) -> Self {
         Handler {
-            event_store,
-            _data: PhantomData,
+            stores,
+            _data: PhantomData::new(),
         }
     }
 
-    pub async fn handle_chunk(
+    pub async fn handle_chunk<R: RoomVersion>(
         &self,
         chunk: DagChunkFragment<R::Event>,
     ) -> Result<Vec<PersistEventInfo<R, S>>, Error> {
@@ -204,11 +201,13 @@ impl<R: RoomVersion, S: RoomState, ES: EventStore<R, S> + Clone>
         // checks based on auth events. Nor does it check for soft failures.
         // Former should be checked before we enter here, the latter after.
 
+        let stores = self.stores.clone();
+        let event_store = stores.get_event_store::<R>();
+
         let missing = get_missing(&chunk.events);
 
         if !missing.is_empty() {
-            let unknown_events = self
-                .event_store
+            let unknown_events = event_store
                 .missing_events(
                     &missing.iter().map(|e| e as &str).collect::<Vec<_>>(),
                 )
@@ -225,11 +224,11 @@ impl<R: RoomVersion, S: RoomState, ES: EventStore<R, S> + Clone>
         let mut event_to_state_after: HashMap<String, S> = HashMap::new();
 
         for event_id in &missing {
-            let state = self.event_store.get_state_for(&[event_id]).await?;
+            let state = event_store.get_state_for(&[event_id]).await?;
             event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
 
-        let store = BackedStore::new(self.event_store.clone());
+        let store = BackedStore::new(event_store);
 
         let mut persisted_state = Vec::new();
         for event in chunk.events {

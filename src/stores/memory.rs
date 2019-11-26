@@ -1,6 +1,8 @@
 use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
-use crate::stores::{EventStore, RoomStore};
+use crate::state_map::StateMap;
+use crate::stores::{EventStore, RoomStore, StoreFactory};
 
+use anymap::AnyMap;
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
@@ -158,7 +160,7 @@ where
 {
     fn insert_new_events(
         &self,
-        events: impl IntoIterator<Item = R::Event>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
@@ -209,5 +211,47 @@ where
             .unwrap_or_default();
 
         future::ok(extrems).boxed()
+    }
+}
+
+#[derive(Debug)]
+pub struct MemoryStoreFactory {
+    stores: AnyMap,
+}
+
+impl MemoryStoreFactory {
+    pub fn new() -> MemoryStoreFactory {
+        MemoryStoreFactory {
+            stores: AnyMap::new(),
+        }
+    }
+
+    pub fn add<R: RoomVersion>(
+        &mut self,
+        store: MemoryEventStore<R, StateMap<String>>,
+    ) {
+        self.stores.insert(store);
+    }
+}
+
+impl Default for MemoryStoreFactory {
+    fn default() -> MemoryStoreFactory {
+        MemoryStoreFactory::new()
+    }
+}
+
+impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
+    fn get_event_store<R: RoomVersion>(
+        &self,
+    ) -> &dyn EventStore<R, StateMap<String>> {
+        self.stores
+            .get::<MemoryEventStore<R, StateMap<String>>>()
+            .unwrap()
+    }
+
+    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event> {
+        self.stores
+            .get::<MemoryEventStore<R, StateMap<String>>>()
+            .unwrap()
     }
 }

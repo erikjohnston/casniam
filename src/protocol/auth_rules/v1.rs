@@ -35,9 +35,9 @@ where
     fn check<S: RoomState>(
         e: &R::Event,
         s: &S,
-        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &(impl EventStore<Self::RoomVersion, S>),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
-        Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
+        Pin::from(Box::new(check(e.clone(), s.clone(), store)))
     }
 
     fn auth_types_for_event(
@@ -54,7 +54,7 @@ where
 pub async fn check<R, S>(
     event: R::Event,
     state: S,
-    store: impl EventStore<R, S>,
+    store: &impl EventStore<R, S>,
 ) -> Result<(), Error>
 where
     R: RoomVersion,

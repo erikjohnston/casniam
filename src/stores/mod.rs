@@ -1,13 +1,11 @@
-use crate::protocol::{Event, RoomState, RoomVersion};
-
 use std::collections::BTreeSet;
-
-use std::iter;
 use std::mem::swap;
 
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+
+use crate::protocol::{Event, RoomState, RoomVersion};
 
 pub mod backed;
 pub mod memory;
@@ -159,18 +157,11 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
 pub trait RoomStore<E: Event>: Send + Sync {
     /// Insert non-rejected events that should be used for calculating forward
     /// extremities.
-    fn insert_new_events(
-        &self,
-        events: impl IntoIterator<Item = E>,
-    ) -> BoxFuture<Result<(), Error>>
-    where
-        Self: Sized;
+    fn insert_new_events(&self, events: Vec<E>)
+        -> BoxFuture<Result<(), Error>>;
 
-    fn insert_new_event(&self, event: E) -> BoxFuture<Result<(), Error>>
-    where
-        Self: Sized,
-    {
-        self.insert_new_events(iter::once(event))
+    fn insert_new_event(&self, event: E) -> BoxFuture<Result<(), Error>> {
+        self.insert_new_events(vec![event])
     }
 
     /// Get the forward extremities for a room.
@@ -178,4 +169,19 @@ pub trait RoomStore<E: Event>: Send + Sync {
         &self,
         room_id: String,
     ) -> BoxFuture<Result<BTreeSet<String>, Error>>;
+}
+
+impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for &'static T where
+    T: EventStore<R, S>
+{
+}
+
+impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for Box<T> where
+    T: EventStore<R, S>
+{
+}
+
+pub trait StoreFactory<S: RoomState> {
+    fn get_event_store<R: RoomVersion>(&self) -> &dyn EventStore<R, S>;
+    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event>;
 }
