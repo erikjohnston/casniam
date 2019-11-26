@@ -521,9 +521,11 @@ mod tests {
             builder = builder.with_content(m.as_object().unwrap().clone());
         }
 
-        let mut state = block_on(store.get_state_for(&prev_events))
-            .unwrap()
-            .unwrap();
+        let mut state = block_on(store.get_state_for(
+            &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
+        ))
+        .unwrap()
+        .unwrap();
 
         builder = builder.with_prev_events(prev_events);
 
@@ -536,7 +538,7 @@ mod tests {
 
         let event_id = event.event_id().to_string();
 
-        block_on(store.insert_events(once((event, state)))).unwrap();
+        block_on(store.insert_events(vec![(event, state)])).unwrap();
 
         event_id
     }
@@ -554,7 +556,7 @@ mod tests {
             vec![],
         );
 
-        let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
+        let state = block_on(store.get_state_for(&[&create])).unwrap().unwrap();
 
         let (unconflicted, _) = get_conflicted_events(&[state.clone()]);
 
@@ -574,7 +576,7 @@ mod tests {
             vec![],
         );
 
-        let state = block_on(store.get_state_for(&[create])).unwrap().unwrap();
+        let state = block_on(store.get_state_for(&[&create])).unwrap().unwrap();
 
         let resolved =
             block_on(<RoomVersion3 as RoomVersion>::State::resolve_state(
@@ -659,8 +661,9 @@ mod tests {
             vec![ijr],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[imb, jr1])).unwrap().unwrap();
+        let final_state = block_on(store.get_state_for(&[&imb, &jr1]))
+            .unwrap()
+            .unwrap();
 
         assert!(!final_state.contains_key("m.room.member", bob));
     }
@@ -777,9 +780,8 @@ mod tests {
             vec![pa.clone()],
         );
 
-        let final_state = block_on(store.get_state_for(&[mb.clone(), pb]))
-            .unwrap()
-            .unwrap();
+        let final_state =
+            block_on(store.get_state_for(&[&mb, &pb])).unwrap().unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -911,9 +913,8 @@ mod tests {
             vec![pb.clone()],
         );
 
-        let final_state = block_on(store.get_state_for(&[pb, pc.clone()]))
-            .unwrap()
-            .unwrap();
+        let final_state =
+            block_on(store.get_state_for(&[&pb, &pc])).unwrap().unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1047,7 +1048,7 @@ mod tests {
         let t3 =
             create_event(&store, "m.room.topic", Some(""), bob, None, vec![pb]);
 
-        let final_state = block_on(store.get_state_for(&[pa2.clone(), t3]))
+        let final_state = block_on(store.get_state_for(&[&pa2, &t3]))
             .unwrap()
             .unwrap();
 
@@ -1170,9 +1171,7 @@ mod tests {
         );
 
         let final_state =
-            block_on(store.get_state_for(&[mb.clone(), t1.clone()]))
-                .unwrap()
-                .unwrap();
+            block_on(store.get_state_for(&[&mb, &t1])).unwrap().unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1336,7 +1335,7 @@ mod tests {
             vec![msg.clone()],
         );
 
-        let final_state = block_on(store.get_state_for(&[msg, t4.clone()]))
+        let final_state = block_on(store.get_state_for(&[&msg, &t4]))
             .unwrap()
             .unwrap();
 
