@@ -612,11 +612,11 @@ mod tests {
     struct DummyState;
 
     impl RoomStateResolver for DummyState {
-        type Auth = DummyAuth;
+        type RoomVersion = DummyVersion;
 
         fn resolve_state<'a, S: RoomState>(
-            _states: Vec<S>,
-            _store: &'a impl EventStore<Event = <Self::Auth as AuthRules>::Event>,
+            states: Vec<S>,
+            store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
         ) -> BoxFuture<Result<S, Error>> {
             Box::pin(future::ok(S::new()))
         }
@@ -625,12 +625,12 @@ mod tests {
     struct DummyAuth;
 
     impl AuthRules for DummyAuth {
-        type Event = TestEvent;
+        type RoomVersion = DummyVersion;
 
-        fn check(
-            _e: &Self::Event,
-            _s: &impl RoomState,
-            _store: &impl EventStore<Event = Self::Event>,
+        fn check<S: RoomState>(
+            e: &<Self::RoomVersion as RoomVersion>::Event,
+            s: &S,
+            store: &(impl EventStore<Self::RoomVersion, S> + Clone),
         ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
             Box::pin(future::ok(()))
         }
@@ -659,54 +659,42 @@ mod tests {
     #[derive(Clone, Debug)]
     struct DummyStore;
 
-    impl EventStore for DummyStore {
-        type Event = TestEvent;
-        type RoomState = StateMap<String>;
-        type RoomVersion = DummyVersion;
-
+    impl EventStore<DummyVersion, StateMap<String>> for DummyStore {
         fn insert_events(
             &self,
-            _events: impl IntoIterator<Item = (Self::Event, Self::RoomState)>,
+            events: Vec<(TestEvent, StateMap<String>)>,
         ) -> BoxFuture<Result<(), Error>> {
             unimplemented!()
         }
 
-        fn missing_events<
-            I: IntoIterator<Item = impl AsRef<str> + ToString>,
-        >(
+        fn missing_events(
             &self,
-            _event_ids: I,
+            event_ids: &[&str],
         ) -> BoxFuture<Result<Vec<String>, Error>> {
             unimplemented!()
         }
 
         fn get_events(
             &self,
-            _event_ids: impl IntoIterator<Item = impl AsRef<str>>,
-        ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+            event_ids: &[&str],
+        ) -> BoxFuture<Result<Vec<TestEvent>, Error>> {
             unimplemented!()
         }
 
-        fn get_state_for<T: AsRef<str>>(
+        fn get_state_for(
             &self,
-            _event_ids: &[T],
-        ) -> BoxFuture<Result<Option<Self::RoomState>, Error>> {
-            unimplemented!()
-        }
-
-        fn get_conflicted_auth_chain(
-            &self,
-            _event_ids: Vec<Vec<impl AsRef<str>>>,
-        ) -> BoxFuture<Result<Vec<Self::Event>, Error>> {
+            event_ids: &[&str],
+        ) -> BoxFuture<Result<Option<StateMap<String>>, Error>> {
             unimplemented!()
         }
     }
 
     #[test]
     fn test_handle() {
-        let handler = Handler {
-            event_store: DummyStore,
-        };
+        let handler =
+            Handler::<DummyVersion, StateMap<String>, DummyStore>::new(
+                DummyStore,
+            );
 
         let events = vec![
             TestEvent {
