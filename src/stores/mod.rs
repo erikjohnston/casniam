@@ -60,8 +60,6 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
         &self,
         event_ids: Vec<Vec<String>>,
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
-        let store = self.clone();
-
         async move {
             let mut auth_chains: Vec<BTreeSet<String>> =
                 Vec::with_capacity(event_ids.len());
@@ -78,7 +76,7 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
                             continue;
                         }
 
-                        if let Some(event) = store.get_event(&event_id).await? {
+                        if let Some(event) = self.get_event(&event_id).await? {
                             new_stack.extend(
                                 event
                                     .auth_event_ids()
@@ -111,7 +109,7 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
 
             let mut events = Vec::new();
             for e in differences {
-                if let Some(event) = store.get_event(e).await? {
+                if let Some(event) = self.get_event(e).await? {
                     events.push(event);
                 }
             }
@@ -126,15 +124,13 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
         event_ids: Vec<String>,
         limit: usize,
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
-        let database = self.clone();
-
         async move {
             let mut queue = event_ids;
             let mut to_return = Vec::new();
 
             'top: while !queue.is_empty() {
                 let m: Vec<_> = queue.drain(..).collect();
-                let events = database
+                let events = self
                     .get_events(
                         &m.iter().map(|e| e as &str).collect::<Vec<_>>(),
                     )

@@ -52,7 +52,7 @@ where
         let store = self.clone();
 
         let event_ids: Vec<_> =
-            event_ids.into_iter().map(|e| e.to_string()).collect();
+            event_ids.iter().map(|&e| e.to_string()).collect();
 
         async move {
             let mut missing = store
@@ -83,7 +83,7 @@ where
         let store = self.clone();
 
         let event_ids: Vec<_> =
-            event_ids.into_iter().map(|e| e.to_string()).collect();
+            event_ids.iter().map(|&e| e.to_string()).collect();
 
         async move {
             let mut events = store
@@ -124,7 +124,7 @@ where
         let store = self.clone();
 
         let event_ids: Vec<_> =
-            event_ids.iter().map(|e| e.to_string()).collect();
+            event_ids.iter().map(|&e| e.to_string()).collect();
 
         async move {
             let mut states = Vec::with_capacity(event_ids.len());

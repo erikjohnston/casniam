@@ -83,9 +83,9 @@ where
 
         future::ok(
             event_ids
-                .into_iter()
+                .iter()
                 .filter(|e| !store.event_map.contains_key(**e))
-                .map(|e| e.to_string())
+                .map(|&e| e.to_string())
                 .collect(),
         )
         .boxed()
@@ -99,7 +99,7 @@ where
 
         future::ok(
             event_ids
-                .into_iter()
+                .iter()
                 .filter_map(|e| store.event_map.get(*e))
                 .cloned()
                 .collect(),
