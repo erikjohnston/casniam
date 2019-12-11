@@ -1,15 +1,20 @@
 use failure::Error;
 use futures::compat::Future01CompatExt;
 use futures::FutureExt;
+use futures_util::stream::StreamExt;
 use http::Uri;
 use hyper;
-use hyper::client::connect::{Connect, Connected, Destination, HttpConnector};
+use hyper::client::connect::Connection;
+use hyper::client::connect::{Connected, HttpConnector};
+use hyper::service::Service;
 use hyper::Client;
 use hyper_tls::HttpsConnector;
+use hyper_tls::{MaybeHttpsStream, TlsStream};
 use log::info;
 use native_tls::TlsConnector;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio_tls::{TlsConnector as AsyncTlsConnector, TlsStream};
+use tokio_tls::TlsConnector as AsyncTlsConnector;
 use trust_dns_resolver;
 
 use std::collections::BTreeMap;
@@ -17,6 +22,7 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{self, Poll};
 
 pub struct Endpoint {
     pub host: String,
@@ -36,8 +42,7 @@ impl MatrixResolver {
     pub fn new(
     ) -> Result<(MatrixResolver, impl Future<Output = ()>), failure::Error>
     {
-        let http_client =
-            hyper::Client::builder().build(HttpsConnector::new()?);
+        let http_client = hyper::Client::builder().build(HttpsConnector::new());
 
         MatrixResolver::with_client(http_client)
     }
@@ -140,10 +145,16 @@ impl MatrixResolver {
     }
 }
 
-async fn get_well_known<C: Connect + 'static>(
+async fn get_well_known<C>(
     http_client: &Client<C>,
     host: &str,
-) -> Option<WellKnownServer> {
+) -> Option<WellKnownServer>
+where
+    C: Service<Uri> + Clone + Sync + Send + 'static,
+    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    C::Future: Unpin + Send,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+{
     // TODO: Add timeout.
 
     let uri = hyper::Uri::builder()
@@ -170,6 +181,7 @@ struct WellKnownServer {
     server: String,
 }
 
+#[derive(Clone)]
 pub struct MatrixConnector {
     resolver: MatrixResolver,
 }
@@ -180,24 +192,28 @@ impl MatrixConnector {
     }
 }
 
-impl Connect for MatrixConnector {
-    type Transport = TlsStream<TcpStream>;
+impl Service<Uri> for MatrixConnector {
+    type Response = MaybeHttpsStream<TcpStream>;
     type Error = Error;
     type Future = Pin<
-        Box<
-            dyn Future<
-                    Output = Result<(Self::Transport, Connected), Self::Error>,
-                > + Send,
-        >,
+        Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>,
     >;
 
-    fn connect(&self, dst: Destination) -> Self::Future {
+    fn poll_ready(
+        &mut self,
+        _: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        // This connector is always ready, but others might not be.
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
         let resolver = self.resolver.clone();
         async move {
             let endpoints = resolver
                 .resolve_server_name_from_host_port(
-                    dst.host().to_string(),
-                    dst.port(),
+                    dst.host().expect("hostname").to_string(),
+                    dst.port_u16(),
                 )
                 .await?;
 
@@ -208,7 +224,7 @@ impl Connect for MatrixConnector {
                     // with our lives.
                     Err(e) => info!(
                         "Failed to connect to {} via {}:{} because {}",
-                        dst.host(),
+                        dst.host().expect("hostname"),
                         endpoint.host,
                         endpoint.port,
                         e,
@@ -224,24 +240,23 @@ impl Connect for MatrixConnector {
 
 /// Attempts to connect to a particular endpoint.
 async fn try_connecting(
-    dst: &Destination,
+    dst: &Uri,
     endpoint: &Endpoint,
-) -> Result<(TlsStream<TcpStream>, Connected), Error> {
+) -> Result<MaybeHttpsStream<TcpStream>, Error> {
     let tcp =
         TcpStream::connect((&endpoint.host as &str, endpoint.port)).await?;
 
-    let connector: AsyncTlsConnector = if dst.host().contains("localhost") {
-        TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?
-            .into()
-    } else {
-        TlsConnector::new().unwrap().into()
-    };
+    let connector: AsyncTlsConnector =
+        if dst.host().expect("hostname").contains("localhost") {
+            TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()?
+                .into()
+        } else {
+            TlsConnector::new().unwrap().into()
+        };
 
     let tls = connector.connect(&endpoint.tls_name, tcp).await?;
 
-    let connected = Connected::new();
-
-    Ok((tls, connected))
+    Ok(tls.into())
 }
