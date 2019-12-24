@@ -8,24 +8,37 @@ use futures::FutureExt;
 
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
+use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct BackedStore<'a, R, S, ES: ?Sized>
+pub struct BackedStore<R, S, ES: ?Sized>
 where
     R: RoomVersion,
     S: RoomState,
 {
-    store: &'a ES,
+    store: Arc<ES>,
     memory: MemoryEventStore<R, S>,
 }
 
-impl<'a, R, S, ES> BackedStore<'a, R, S, ES>
+impl<R, S, ES: ?Sized> Clone for BackedStore<R, S, ES>
+where
+    R: RoomVersion,
+    S: RoomState,
+{
+    fn clone(&self) -> Self {
+        BackedStore {
+            store: self.store.clone(),
+            memory: self.memory.clone(),
+        }
+    }
+}
+
+impl<R, S, ES> BackedStore<R, S, ES>
 where
     R: RoomVersion,
     S: RoomState,
     ES: EventStore<R, S> + ?Sized,
 {
-    pub fn new(store: &'a ES) -> BackedStore<R, S, ES> {
+    pub fn new(store: Arc<ES>) -> BackedStore<R, S, ES> {
         BackedStore {
             store,
             memory: new_memory_store::<R, S>(),
@@ -33,7 +46,7 @@ where
     }
 }
 
-impl<R, S, ES> EventStore<R, S> for BackedStore<'static, R, S, ES>
+impl<R, S, ES> EventStore<R, S> for BackedStore<R, S, ES>
 where
     R: RoomVersion,
     S: RoomState,

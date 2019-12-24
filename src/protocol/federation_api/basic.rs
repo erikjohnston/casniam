@@ -57,7 +57,7 @@ where
             })))
             .with_prev_events(prev_event_ids)
             .origin(self.server_name.clone())
-            .build(event_store)
+            .build(event_store.as_ref())
             .await?;
 
             event.sign(
@@ -89,7 +89,7 @@ where
                 event.sender().splitn(2, ':').last().unwrap().to_string();
 
             let chunk = DagChunkFragment::from_event(event.clone());
-            let handler = Handler::new(self.stores);
+            let handler = Handler::new(self.stores.clone());
             let mut stuff = handler.handle_chunk::<R>(chunk).await?;
 
             for info in &mut stuff {

@@ -243,15 +243,21 @@ impl Default for MemoryStoreFactory {
 impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
     fn get_event_store<R: RoomVersion>(
         &self,
-    ) -> &dyn EventStore<R, StateMap<String>> {
-        self.stores
-            .get::<MemoryEventStore<R, StateMap<String>>>()
-            .unwrap()
+    ) -> Arc<dyn EventStore<R, StateMap<String>>> {
+        Arc::new(
+            self.stores
+                .get::<MemoryEventStore<R, StateMap<String>>>()
+                .unwrap()
+                .clone(),
+        )
     }
 
-    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event> {
-        self.stores
-            .get::<MemoryEventStore<R, StateMap<String>>>()
-            .unwrap()
+    fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>> {
+        Arc::new(
+            self.stores
+                .get::<MemoryEventStore<R, StateMap<String>>>()
+                .unwrap()
+                .clone(),
+        )
     }
 }

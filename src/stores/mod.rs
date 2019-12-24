@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::mem::swap;
+use std::sync::Arc;
 
 use failure::Error;
 use futures::future::BoxFuture;
@@ -171,17 +172,17 @@ pub trait RoomStore<E: Event>: Send + Sync {
     ) -> BoxFuture<Result<BTreeSet<String>, Error>>;
 }
 
-impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for &'static T where
-    T: EventStore<R, S>
-{
-}
+// impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for &'static T where
+//     T: EventStore<R, S>
+// {
+// }
 
-impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for Box<T> where
-    T: EventStore<R, S>
-{
-}
+// impl<T, R: RoomVersion, S: RoomState> EventStore<R, S> for Box<T> where
+//     T: EventStore<R, S>
+// {
+// }
 
 pub trait StoreFactory<S: RoomState> {
-    fn get_event_store<R: RoomVersion>(&self) -> &dyn EventStore<R, S>;
-    fn get_room_store<R: RoomVersion>(&self) -> &dyn RoomStore<R::Event>;
+    fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R, S>>;
+    fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>>;
 }

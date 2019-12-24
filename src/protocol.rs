@@ -78,7 +78,7 @@ pub trait RoomStateResolver {
 
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
-        store: &'a impl EventStore<Self::RoomVersion, S>,
+        store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
     ) -> BoxFuture<Result<S, Error>>;
 }
 
@@ -117,7 +117,7 @@ pub trait AuthRules {
     fn check<S: RoomState>(
         e: &<Self::RoomVersion as RoomVersion>::Event,
         s: &S,
-        store: &impl EventStore<Self::RoomVersion, S>,
+        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
     fn auth_types_for_event(
@@ -189,7 +189,7 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
     pub fn new(stores: F) -> Self {
         Handler {
             stores,
-            _data: PhantomData::new(),
+            _data: PhantomData,
         }
     }
 
@@ -228,7 +228,7 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
 
-        let store = BackedStore::new(event_store);
+        let store = BackedStore::new(event_store.clone());
 
         let mut persisted_state = Vec::new();
         for event in chunk.events {
