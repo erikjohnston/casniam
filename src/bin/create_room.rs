@@ -3,11 +3,10 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
 
 use failure::Error;
 use failure::ResultExt as _;
-use futures::FutureExt;
+use futures::{AsyncReadExt, FutureExt, StreamExt, TryFutureExt};
 use http_service::Body;
 use http_service::HttpService;
 use log::info;
@@ -20,8 +19,7 @@ use sha2::Digest;
 use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 use tide;
-use tide::error::ResultExt as _;
-use tide::querystring::ContextExt as _;
+use tide::{IntoResponse, ResultExt};
 use tokio::net::TcpListener;
 
 use casniam::protocol::client::MemoryTransactionSender;
@@ -63,7 +61,7 @@ struct AppData {
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    room_databases: Arc<Mutex<anymap::Map<dyn anymap::any::Any + Send>>>,
+    stores: memory::MemoryStoreFactory,
     federation_sender: MemoryTransactionSender,
     key_server_servlet: KeyServerServlet,
 }
@@ -72,15 +70,14 @@ impl AppData {
     fn get_database<R: RoomVersion>(
         &self,
     ) -> memory::MemoryEventStore<R, StateMap<String>> {
-        let mut map = self.room_databases.lock().unwrap();
-        map.entry().or_insert_with(memory::new_memory_store).clone()
+        self.stores.get_memory_store::<R>()
     }
 
     /// Gets called on `/send/` requests
     async fn on_received_transaction<R>(
         self,
         txn: Transaction<R>,
-    ) -> Result<http::Response<Body>, Error>
+    ) -> Result<tide::Response, Error>
     where
         R: RoomVersion,
         R::Event: Serialize + DeserializeOwned,
@@ -88,7 +85,7 @@ impl AppData {
         let database = self.get_database::<R>();
 
         let chunks = DagChunkFragment::from_events(txn.pdus.to_vec());
-        let handler = Handler::new(database.clone());
+        let handler = Handler::new(self.stores.clone());
 
         for chunk in chunks {
             let room_id = chunk.events[0].room_id().to_string();
@@ -103,7 +100,7 @@ impl AppData {
                 continue;
             }
 
-            let stuff = handler.handle_chunk(chunk).await?;
+            let stuff = handler.handle_chunk::<R>(chunk).await?;
 
             database
                 .insert_events(
@@ -117,7 +114,9 @@ impl AppData {
                 .await?;
 
             database
-                .insert_new_events(stuff.iter().map(|i| i.event.clone()))
+                .insert_new_events(
+                    stuff.iter().map(|i| i.event.clone()).collect(),
+                )
                 .await?;
 
             for info in stuff {
@@ -185,7 +184,7 @@ impl AppData {
             }
         }
 
-        Ok(tide::response::json(json!({})))
+        Ok(tide::Response::new(200).body_json(&json!({})).unwrap())
     }
 
     /// Called `/backfill` requests
@@ -193,7 +192,7 @@ impl AppData {
         self,
         event_ids: Vec<String>,
         limit: usize,
-    ) -> Result<http::Response<Body>, Error>
+    ) -> Result<tide::Response, Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
@@ -203,16 +202,18 @@ impl AppData {
             .get_backfill(event_ids, limit)
             .await?;
 
-        Ok(tide::response::json(json!({
-            "pdus": events,
-        })))
+        Ok(tide::Response::new(200)
+            .body_json(&json!({
+                "pdus": events,
+            }))
+            .unwrap())
     }
 
     async fn make_join<R>(
         self,
         room_id: String,
         user_id: String,
-    ) -> Result<http::Response<Body>, Error>
+    ) -> Result<tide::Response, Error>
     where
         R: RoomVersion + Send,
         R::Event: Serialize + Send,
@@ -245,17 +246,19 @@ impl AppData {
             &self.secret_key,
         );
 
-        Ok(tide::response::json(json!({
-            "room_version": R::VERSION,
-            "event": event,
-        })))
+        Ok(tide::Response::new(200)
+            .body_json(&json!({
+                "room_version": R::VERSION,
+                "event": event,
+            }))
+            .unwrap())
     }
 
     async fn send_join<R>(
         self,
         room_id: String,
         event: R::Event,
-    ) -> Result<http::Response<Body>, Error>
+    ) -> Result<tide::Response, Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
@@ -268,8 +271,8 @@ impl AppData {
             event.sender().splitn(2, ':').last().unwrap().to_string();
 
         let chunk = DagChunkFragment::from_event(event.clone());
-        let handler = Handler::new(database.clone());
-        let mut stuff = handler.handle_chunk(chunk).await?;
+        let handler = Handler::new(self.stores.clone());
+        let mut stuff = handler.handle_chunk::<R>(chunk).await?;
 
         for info in &mut stuff {
             assert!(!info.rejected);
@@ -292,11 +295,13 @@ impl AppData {
             .get_events(&state.values().map(|e| e as &str).collect::<Vec<_>>())
             .await?;
 
-        let resp = tide::response::json(json!([200, {
-            "origin": self.server_name,
-            "state": state_events.clone(),
-            "auth_chain": state_events,
-        }]));
+        let resp = tide::Response::new(200)
+            .body_json(&json!([200, {
+                "origin": self.server_name,
+                "state": state_events.clone(),
+                "auth_chain": state_events,
+            }]))
+            .unwrap();
 
         let send_fut = async move {
             self.federation_sender
@@ -348,7 +353,7 @@ impl AppData {
                 .send_event::<R>(event_origin.clone(), event.clone())
                 .await?;
 
-            tokio_timer::delay_for(std::time::Duration::from_secs(30)).await;
+            tokio::time::delay_for(std::time::Duration::from_secs(30)).await;
 
             let builder = EventBuilder::new(
                 &room_id,
@@ -471,8 +476,8 @@ impl AppData {
     {
         let database = self.get_database::<R>();
 
-        let handler = Handler::new(database.clone());
-        let stuff = handler.handle_chunk(chunk).await?;
+        let handler = Handler::new(self.stores.clone());
+        let stuff = handler.handle_chunk::<R>(chunk).await?;
 
         for info in &stuff {
             assert!(!info.rejected);
@@ -487,7 +492,9 @@ impl AppData {
 
         // TODO: Do we need to clone?
         database
-            .insert_new_events(stuff.iter().map(|info| info.event.clone()))
+            .insert_new_events(
+                stuff.iter().map(|info| info.event.clone()).collect(),
+            )
             .await?;
 
         Ok(stuff)
@@ -603,7 +610,7 @@ async fn main() -> std::io::Result<()> {
         BTreeMap::new(),
     );
 
-    let room_databases = Arc::new(Mutex::new(anymap::Map::new()));
+    let stores = memory::MemoryStoreFactory::new();
 
     let (resolver, fut) = MatrixResolver::new().unwrap();
     tokio::spawn(fut.map(|_| ()));
@@ -626,17 +633,15 @@ async fn main() -> std::io::Result<()> {
         secret_key,
         federation_sender,
         key_server_servlet,
-        room_databases,
+        stores,
     };
 
-    let key_render = |ctx: tide::Context<AppData>| {
-        async move {
-            let body = ctx.state().key_server_servlet.make_body();
-            tide::response::json(body)
-        }
+    let key_render = |ctx: tide::Request<AppData>| async move {
+        let body = ctx.state().key_server_servlet.make_body();
+        tide::Response::new(200).body_json(&body).unwrap()
     };
 
-    let mut app = tide::App::with_state(app_data);
+    let mut app = tide::with_state(app_data);
 
     app.middleware(MiddlewareLogger);
 
@@ -644,7 +649,7 @@ async fn main() -> std::io::Result<()> {
     app.at("/_matrix/key/v2/server/:key*").get(key_render);
 
     app.at("/_matrix/federation/v1/make_join/:room_id/:user_id")
-        .get(|ctx: tide::Context<AppData>| {
+        .get(|ctx: tide::Request<AppData>| {
             async move {
                 let state = ctx.state().clone();
                 let room_id: String = ctx.param("room_id").client_err()?;
@@ -666,10 +671,11 @@ async fn main() -> std::io::Result<()> {
                     .compat()
                     .server_err()
             }
+            .unwrap_or_else(|e| e.into_response())
         });
 
     app.at("/_matrix/federation/v1/send_join/:room_id/:event_id")
-        .put(|mut ctx: tide::Context<AppData>| {
+        .put(|mut ctx: tide::Request<AppData>| {
             async move {
                 let room_id: String = ctx.param("room_id").client_err()?;
                 let event = ctx.body_json().await.client_err()?;
@@ -687,10 +693,11 @@ async fn main() -> std::io::Result<()> {
                     .compat()
                     .server_err()
             }
+            .unwrap_or_else(|e| e.into_response())
         });
 
     app.at("/_matrix/federation/v1/send/:txn_id").put(
-        |mut ctx: tide::Context<AppData>| {
+        |mut ctx: tide::Request<AppData>| {
             async move {
                 let txn = ctx.body_json().await.client_err()?;
                 let state = ctx.state();
@@ -702,18 +709,19 @@ async fn main() -> std::io::Result<()> {
                     .compat()
                     .server_err()
             }
+            .unwrap_or_else(|e| e.into_response())
         },
     );
 
     app.at("/_matrix/federation/v1/backfill/:room_id").get(
-        |ctx: tide::Context<AppData>| {
+        |ctx: tide::Request<AppData>| {
             async move {
                 let state = ctx.state();
 
                 let mut event_ids = Vec::new();
                 let mut limit = 100;
 
-                for (key, value) in ctx.url_query::<Vec<(String, String)>>()? {
+                for (key, value) in ctx.query::<Vec<(String, String)>>()? {
                     match &*key {
                         "v" => event_ids.push(value),
                         "limit" => {
@@ -734,92 +742,101 @@ async fn main() -> std::io::Result<()> {
                     .compat()
                     .server_err()
             }
+            .unwrap_or_else(|e| e.into_response())
         },
     );
 
     app.at("/_matrix/federation/v1/query/directory").get(
-        |ctx: tide::Context<AppData>| {
-            async move {
-                let state = ctx.state();
+        |ctx: tide::Request<AppData>| async move {
+            let state = ctx.state();
 
-                let query: RoomAliasQuery = ctx.url_query()?;
+            let query: RoomAliasQuery = ctx.query()?;
 
-                let room_id = format!(
-                    "!{}:{}",
-                    base64::encode_config(&Sha256::digest(query.room_alias.as_bytes()), base64::URL_SAFE_NO_PAD),
-                    state.server_name.clone(),
-                );
+            let room_id = format!(
+                "!{}:{}",
+                base64::encode_config(
+                    &Sha256::digest(query.room_alias.as_bytes()),
+                    base64::URL_SAFE_NO_PAD
+                ),
+                state.server_name.clone(),
+            );
 
-                Ok(tide::response::json(json!({ "room_id": room_id, "servers": &[&state.server_name] }))) as Result<_, tide::Error>
-            }
-        },
+            Ok(tide::Response::new(200)
+            .body_json(
+                &json!({ "room_id": room_id, "servers": &[&state.server_name] }),
+            ).unwrap()) as Result<_, tide::Error>
+        }.unwrap_or_else(|e| e.into_response()),
     );
 
-    let mut file = File::open("identity.pfx").unwrap();
-    let mut identity = vec![];
-    file.read_to_end(&mut identity).unwrap();
-    let identity =
-        native_tls::Identity::from_pkcs12(&identity, "test").unwrap();
-    let acceptor = native_tls::TlsAcceptor::new(identity).unwrap();
-    let acceptor = tokio_tls::TlsAcceptor::from(acceptor);
+    app.listen("127.0.0.1:9998").await?;
+    Ok(())
 
-    let mut listener = TcpListener::bind("127.0.0.1:9999").await?;
+    // let mut file = File::open("identity.pfx").unwrap();
+    // let mut identity = vec![];
+    // file.read_to_end(&mut identity).unwrap();
+    // let identity =
+    //     native_tls::Identity::from_pkcs12(&identity, "test").unwrap();
+    // let acceptor = native_tls::TlsAcceptor::new(identity).unwrap();
+    // let acceptor = tokio_tls::TlsAcceptor::from(acceptor);
 
-    let http_config = hyper::server::conn::Http::new();
+    // let mut listener = TcpListener::bind("127.0.0.1:9999").await?;
 
-    let tide_server = app.into_http_service();
+    // let http_config = hyper::server::conn::Http::new();
 
-    let new_service = move || {
-        let tide_server = tide_server.clone();
+    // let tide_server = app.into_http_service();
 
-        hyper::service::service_fn(
-            move |mut req: http::Request<hyper::Body>| -> futures::future::BoxFuture<
-                Result<http::Response<hyper::Body>, failure::Error>,
-            > {
-                let s = tide_server.clone();
+    // let new_service = move || {
+    //     let tide_server = tide_server.clone();
 
-                async move {
-                    let mut vec: Vec<u8> = Vec::new();
-                    while let Some(next) = req.body_mut().next().await {
-                        let chunk = next?;
-                        vec.extend(chunk);
-                    }
+    //     hyper::service::service_fn(
+    //         move |mut req: http::Request<hyper::Body>| -> futures::future::BoxFuture<
+    //             Result<http::Response<hyper::Body>, failure::Error>,
+    //         > {
+    //             let s = tide_server.clone();
 
-                    let req = req.map(|_| Body::from(vec));
-                    let resp = s.respond(&mut (), req).await?;
+    //             async move {
+    //                 let rvec: hyper::Result<Vec<u8>> =
+    //                     req.body().collect().await?;
 
-                    let (parts, body) = resp.into_parts();
-                    let resp_body = body.into_vec().await?;
+    //                 let vec = rvec?;
 
-                    Ok(http::Response::from_parts(
-                        parts,
-                        hyper::Body::from(resp_body),
-                    ))
-                }
-                .boxed()
-            },
-        )
-    };
+    //                 let req = req.map(|_| http_service::Body::from(vec));
+    //                 let resp = s.respond(&mut (), req).await?;
 
-    loop {
-        let (stream, _remote_addr) = listener.accept().await.unwrap();
+    //                 let (parts, body) = resp.into_parts();
 
-        // TODO: there's probably a better way around this.
-        let http_config = http_config.clone();
-        let acceptor = acceptor.clone();
-        let new_service = new_service.clone();
+    //                 let mut resp_body = Vec::new();
+    //                 body.read_to_end(&mut resp_body).await?;
 
-        tokio::spawn(
-            async move {
-                let tls_stream = acceptor.accept(stream).await?;
-                http_config
-                    .serve_connection(tls_stream, new_service())
-                    .await?;
-                Ok(()) as Result<(), failure::Error>
-            }
-            .map(|_| ()),
-        );
-    }
+    //                 Ok(http::Response::from_parts(
+    //                     parts,
+    //                     hyper::Body::from(resp_body),
+    //                 ))
+    //             }
+    //             .boxed()
+    //         },
+    //     )
+    // };
+
+    // loop {
+    //     let (stream, _remote_addr) = listener.accept().await.unwrap();
+
+    //     // TODO: there's probably a better way around this.
+    //     let http_config = http_config.clone();
+    //     let acceptor = acceptor.clone();
+    //     let new_service = new_service.clone();
+
+    //     tokio::spawn(
+    //         async move {
+    //             let tls_stream = acceptor.accept(stream).await?;
+    //             http_config
+    //                 .serve_connection(tls_stream, new_service())
+    //                 .await?;
+    //             Ok(()) as Result<(), failure::Error>
+    //         }
+    //         .map(|_| ()),
+    //     );
+    // }
 }
 
 #[derive(Debug)]
@@ -827,13 +844,13 @@ pub struct MiddlewareLogger;
 
 /// Stores information during request phase and logs information once the response
 /// is generated.
-impl<Data: Send + Sync + 'static> tide::middleware::Middleware<Data>
+impl<State: Send + Sync + 'static> tide::middleware::Middleware<State>
     for MiddlewareLogger
 {
     fn handle<'a>(
         &'a self,
-        cx: tide::Context<Data>,
-        next: tide::middleware::Next<'a, Data>,
+        cx: tide::Request<State>,
+        next: tide::middleware::Next<'a, State>,
     ) -> futures::future::BoxFuture<'a, tide::Response> {
         async {
             let path = cx.uri().path().to_owned();
@@ -847,3 +864,30 @@ impl<Data: Send + Sync + 'static> tide::middleware::Middleware<Data>
         .boxed()
     }
 }
+
+// async fn listen(server: tide::Server<AppData>) -> std::io::Result<()> {
+//     #[derive(Copy, Clone)]
+//     struct Spawner;
+
+//     impl futures::task::Spawn for &Spawner {
+//         fn spawn_obj(
+//             &self,
+//             future: futures::future::FutureObj<'static, ()>,
+//         ) -> Result<(), futures::task::SpawnError> {
+//             tokio::spawn(Box::pin(future));
+//             Ok(())
+//         }
+//     }
+
+//     let listener = TcpListener::bind("127.0.0.1:9999").await?;
+//     println!("Server is listening on: http://{}", listener.local_addr()?);
+//     let http_service = server.into_http_service();
+
+//     let res = http_service_hyper::Server::builder(listener.incoming())
+//         .with_spawner(Spawner {})
+//         .serve(http_service)
+//         .await;
+
+//     res.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+//     Ok(())
+// }

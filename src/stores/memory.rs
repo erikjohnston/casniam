@@ -2,13 +2,13 @@ use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
 use crate::stores::{EventStore, RoomStore, StoreFactory};
 
-use anymap::AnyMap;
+use anymap::{any::Any, Map};
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 
 use std::collections::{BTreeMap, BTreeSet};
-
+use std::mem;
 use std::sync::{Arc, RwLock};
 
 #[derive(Default, Debug)]
@@ -214,23 +214,37 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MemoryStoreFactory {
-    stores: AnyMap,
+    stores: Arc<RwLock<Map<dyn Any + Sync + Send>>>,
 }
 
 impl MemoryStoreFactory {
     pub fn new() -> MemoryStoreFactory {
         MemoryStoreFactory {
-            stores: AnyMap::new(),
+            stores: Arc::new(RwLock::new(Map::new())),
         }
     }
 
-    pub fn add<R: RoomVersion>(
-        &mut self,
-        store: MemoryEventStore<R, StateMap<String>>,
-    ) {
-        self.stores.insert(store);
+    pub fn get_memory_store<R: RoomVersion>(
+        &self,
+    ) -> MemoryEventStore<R, StateMap<String>> {
+        let stores = self.stores.read().expect("Mutex poisoned");
+
+        if let Some(store) =
+            stores.get::<MemoryEventStore<R, StateMap<String>>>()
+        {
+            return store.clone();
+        }
+
+        mem::drop(stores);
+
+        let mut stores = self.stores.write().expect("Mutex poisoned");
+
+        stores
+            .entry::<MemoryEventStore<R, StateMap<String>>>()
+            .or_insert_with(|| new_memory_store())
+            .clone()
     }
 }
 
@@ -244,20 +258,10 @@ impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
     fn get_event_store<R: RoomVersion>(
         &self,
     ) -> Arc<dyn EventStore<R, StateMap<String>>> {
-        Arc::new(
-            self.stores
-                .get::<MemoryEventStore<R, StateMap<String>>>()
-                .unwrap()
-                .clone(),
-        )
+        Arc::new(self.get_memory_store::<R>().clone())
     }
 
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>> {
-        Arc::new(
-            self.stores
-                .get::<MemoryEventStore<R, StateMap<String>>>()
-                .unwrap()
-                .clone(),
-        )
+        Arc::new(self.get_memory_store::<R>().clone())
     }
 }

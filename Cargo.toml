@@ -25,7 +25,7 @@ tokio-tls = "0.3.0"
 hyper = "0.13.0"
 hyper-tls = "0.4.0"
 native-tls = "0.2.3"
-tide = "0.4.0"
+tide = "0.5.1"
 http-service = "0.4.0"
 http-service-hyper = "0.4.1"
 futures-util = "0.3.0"
@@ -35,7 +35,7 @@ serde_derive = "1.0.102"
 
 [dependencies.tokio]
 version = "0.2.4"
-features = ["net"]
+features = ["net", "rt-threaded", "macros"]
 
 
 [dependencies.indolentjson]
