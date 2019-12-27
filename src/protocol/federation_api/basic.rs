@@ -76,7 +76,7 @@ where
 
     fn on_send_join<R: RoomVersion>(
         &self,
-        room_id: String,
+        _room_id: String,
         event: R::Event,
     ) -> BoxFuture<FederationResult<SendJoinResponse<R::Event>>> {
         let event_store = self.stores.get_event_store::<R>();
@@ -85,7 +85,7 @@ where
         async move {
             let event_id = event.event_id().to_string();
 
-            let event_origin =
+            let _event_origin =
                 event.sender().splitn(2, ':').last().unwrap().to_string();
 
             let chunk = DagChunkFragment::from_event(event.clone());
