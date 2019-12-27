@@ -125,10 +125,17 @@ where
     fn on_backfill<R: RoomVersion>(
         &self,
         _room_id: String,
-        _event_ids: Vec<String>,
-        _limit: usize,
+        event_ids: Vec<String>,
+        limit: usize,
     ) -> BoxFuture<FederationResult<BackfillResponse<R::Event>>> {
-        unimplemented!()
+        let event_store = self.stores.get_event_store::<R>();
+
+        async move {
+            let pdus = event_store.get_backfill(event_ids, limit).await?;
+
+            Ok(BackfillResponse { pdus })
+        }
+        .boxed()
     }
 
     fn on_send(
