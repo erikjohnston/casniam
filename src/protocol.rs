@@ -438,8 +438,12 @@ fn get_missing<'a>(
 mod tests {
     use super::*;
     use crate::state_map::StateMap;
+    use crate::stores::RoomStore;
+
     use futures::executor::block_on;
     use futures::future;
+
+    use std::sync::Arc;
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     struct TestEvent {
@@ -658,10 +662,13 @@ mod tests {
     #[derive(Clone, Debug)]
     struct DummyStore;
 
-    impl EventStore<DummyVersion, StateMap<String>> for DummyStore {
+    impl<R> EventStore<R, StateMap<String>> for DummyStore
+    where
+        R: RoomVersion,
+    {
         fn insert_events(
             &self,
-            _events: Vec<(TestEvent, StateMap<String>)>,
+            _events: Vec<(R::Event, StateMap<String>)>,
         ) -> BoxFuture<Result<(), Error>> {
             unimplemented!()
         }
@@ -676,7 +683,7 @@ mod tests {
         fn get_events(
             &self,
             _event_ids: &[&str],
-        ) -> BoxFuture<Result<Vec<TestEvent>, Error>> {
+        ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
             unimplemented!()
         }
 
@@ -688,12 +695,26 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct DummyStoreFactory;
+
+    impl StoreFactory<StateMap<String>> for DummyStoreFactory {
+        fn get_event_store<R: RoomVersion>(
+            &self,
+        ) -> Arc<dyn EventStore<R, StateMap<String>>> {
+            Arc::new(DummyStore)
+        }
+
+        fn get_room_store<R: RoomVersion>(
+            &self,
+        ) -> Arc<dyn RoomStore<R::Event>> {
+            unimplemented!()
+        }
+    }
+
     #[test]
     fn test_handle() {
-        let handler =
-            Handler::<DummyVersion, StateMap<String>, DummyStore>::new(
-                DummyStore,
-            );
+        let handler = Handler::<StateMap<String>, _>::new(DummyStoreFactory);
 
         let events = vec![
             TestEvent {
@@ -724,7 +745,7 @@ mod tests {
 
         let mut chunks = DagChunkFragment::from_events(events);
 
-        let fut = handler.handle_chunk(chunks.pop().unwrap());
+        let fut = handler.handle_chunk::<DummyVersion>(chunks.pop().unwrap());
 
         let results = block_on(fut).unwrap();
 
