@@ -2,12 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use std::io::Read;
-
 use failure::Error;
 use failure::ResultExt as _;
-use futures::{AsyncReadExt, FutureExt, StreamExt, TryFutureExt};
-
+use futures::{FutureExt, TryFutureExt};
 
 use log::info;
 use percent_encoding::percent_decode_str;
@@ -20,7 +17,6 @@ use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 use tide;
 use tide::{IntoResponse, ResultExt};
-
 
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;

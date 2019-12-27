@@ -243,7 +243,7 @@ impl MemoryStoreFactory {
 
         stores
             .entry::<MemoryEventStore<R, StateMap<String>>>()
-            .or_insert_with(|| new_memory_store())
+            .or_insert_with(new_memory_store)
             .clone()
     }
 }
@@ -258,10 +258,10 @@ impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
     fn get_event_store<R: RoomVersion>(
         &self,
     ) -> Arc<dyn EventStore<R, StateMap<String>>> {
-        Arc::new(self.get_memory_store::<R>().clone())
+        Arc::new(self.get_memory_store::<R>())
     }
 
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>> {
-        Arc::new(self.get_memory_store::<R>().clone())
+        Arc::new(self.get_memory_store::<R>())
     }
 }

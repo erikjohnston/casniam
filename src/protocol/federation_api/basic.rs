@@ -3,11 +3,9 @@ use serde_json::json;
 use sodiumoxide::crypto::sign::SecretKey;
 
 use crate::protocol::events::EventBuilder;
-use crate::protocol::{
-    DagChunkFragment, Event, Handler, RoomState, RoomVersion,
-};
+use crate::protocol::{DagChunkFragment, Event, Handler, RoomVersion};
 use crate::state_map::StateMap;
-use crate::stores::{EventStore, RoomStore, StoreFactory};
+use crate::stores::StoreFactory;
 
 use super::*;
 
