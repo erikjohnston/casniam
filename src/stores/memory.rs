@@ -1,6 +1,6 @@
 use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
-use crate::stores::{EventStore, RoomStore, StoreFactory};
+use crate::stores::{EventStore, RoomStore, RoomVersionStore, StoreFactory};
 
 use anymap::{any::Any, Map};
 use failure::Error;
@@ -8,6 +8,7 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::default;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
@@ -214,15 +215,33 @@ where
     }
 }
 
+#[derive(Default, Debug)]
+pub struct MemoryRoomVersionStore {
+    room_version_map: RwLock<BTreeMap<String, &'static str>>,
+}
+
+impl RoomVersionStore for MemoryRoomVersionStore {
+    fn get_room_version(
+        &self,
+        room_id: &str,
+    ) -> BoxFuture<Result<Option<&'static str>, Error>> {
+        let map = self.room_version_map.read().expect("room version map");
+
+        future::ok(map.get(room_id).copied()).boxed()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MemoryStoreFactory {
     stores: Arc<RwLock<Map<dyn Any + Sync + Send>>>,
+    room_version_store: Arc<MemoryRoomVersionStore>,
 }
 
 impl MemoryStoreFactory {
     pub fn new() -> MemoryStoreFactory {
         MemoryStoreFactory {
             stores: Arc::new(RwLock::new(Map::new())),
+            room_version_store: default::Default::default(),
         }
     }
 
@@ -263,5 +282,9 @@ impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
 
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>> {
         Arc::new(self.get_memory_store::<R>())
+    }
+
+    fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore> {
+        self.room_version_store.clone()
     }
 }

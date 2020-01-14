@@ -438,7 +438,7 @@ fn get_missing<'a>(
 mod tests {
     use super::*;
     use crate::state_map::StateMap;
-    use crate::stores::RoomStore;
+    use crate::stores::{RoomStore, RoomVersionStore};
 
     use futures::executor::block_on;
     use futures::future;
@@ -708,6 +708,10 @@ mod tests {
         fn get_room_store<R: RoomVersion>(
             &self,
         ) -> Arc<dyn RoomStore<R::Event>> {
+            unimplemented!()
+        }
+
+        fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore> {
             unimplemented!()
         }
     }

@@ -185,4 +185,13 @@ pub trait RoomStore<E: Event>: Send + Sync {
 pub trait StoreFactory<S: RoomState> {
     fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R, S>>;
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>>;
+
+    fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore>;
+}
+
+pub trait RoomVersionStore: Send + Sync {
+    fn get_room_version(
+        &self,
+        room_id: &str,
+    ) -> BoxFuture<Result<Option<&'static str>, Error>>;
 }
