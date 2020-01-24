@@ -791,7 +791,7 @@ async fn main() -> std::io::Result<()> {
 
     local
         .run_until(async move { http_server.run().await })
-        .await;
+        .await?;
 
     Ok(())
     // let mut file = File::open("identity.pfx").unwrap();
