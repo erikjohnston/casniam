@@ -504,8 +504,6 @@ mod tests {
 
     use futures::executor::block_on;
 
-    
-
     fn create_event(
         store: &MemoryEventStore<RoomVersion3, StateMap<String>>,
         event_type: &str,

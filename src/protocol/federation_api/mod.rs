@@ -7,6 +7,7 @@ use crate::protocol::RoomVersion;
 
 pub mod basic;
 
+#[derive(Debug)]
 pub enum FederationAPIError {
     HttpResponse(http::Response<Vec<u8>>),
     Error(Error),

@@ -4,9 +4,6 @@ use futures::FutureExt;
 use hyper;
 use rand::Rng;
 
-
-
-
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
 use crate::protocol::RoomVersion;

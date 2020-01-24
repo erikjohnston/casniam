@@ -21,6 +21,9 @@ use tide::{IntoResponse, ResultExt};
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
+use casniam::protocol::federation_api::{
+    basic::StandardFederationAPI, FederationAPI,
+};
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
 use casniam::protocol::{
@@ -60,6 +63,7 @@ struct AppData {
     stores: memory::MemoryStoreFactory,
     federation_sender: MemoryTransactionSender,
     key_server_servlet: KeyServerServlet,
+    federation_api: StandardFederationAPI<memory::MemoryStoreFactory>,
 }
 
 impl AppData {
@@ -214,40 +218,13 @@ impl AppData {
         R: RoomVersion + Send,
         R::Event: Serialize + Send,
     {
-        let database = self.get_database::<R>();
+        let response = self
+            .federation_api
+            .on_make_join::<R>(room_id, user_id)
+            .await
+            .unwrap(); // FIXME
 
-        let stuff = self.clone().generate_room::<R>(room_id.clone()).await?;
-
-        let last_event_id = stuff.last().unwrap().event.event_id().to_string();
-
-        let prev_events = vec![last_event_id];
-
-        let mut event = EventBuilder::new(
-            room_id,
-            user_id.clone(),
-            "m.room.member".to_string(),
-            Some(user_id.clone()),
-        )
-        .with_content(to_value(json!({
-            "membership": "join",
-        })))
-        .with_prev_events(prev_events)
-        .origin(self.server_name.clone())
-        .build(&database)
-        .await?;
-
-        event.sign(
-            self.server_name.clone(),
-            self.key_id.clone(),
-            &self.secret_key,
-        );
-
-        Ok(tide::Response::new(200)
-            .body_json(&json!({
-                "room_version": R::VERSION,
-                "event": event,
-            }))
-            .unwrap())
+        Ok(tide::Response::new(200).body_json(&response).unwrap())
     }
 
     async fn send_join<R>(
@@ -623,6 +600,14 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    let federation_api = StandardFederationAPI::new(
+        stores.clone(),
+        server_name.clone(),
+        key_id.clone(),
+        secret_key.clone(),
+        (),
+    );
+
     let app_data = AppData {
         server_name,
         key_id,
@@ -630,6 +615,7 @@ async fn main() -> std::io::Result<()> {
         federation_sender,
         key_server_servlet,
         stores,
+        federation_api,
     };
 
     let key_render = |ctx: tide::Request<AppData>| async move {
@@ -756,6 +742,14 @@ async fn main() -> std::io::Result<()> {
                 ),
                 state.server_name.clone(),
             );
+
+            // Now create the room.
+            state
+                .clone()
+                .generate_room::<RoomVersion4>(room_id.clone())
+                .await
+                .compat()
+                .server_err()?;
 
             Ok(tide::Response::new(200)
             .body_json(

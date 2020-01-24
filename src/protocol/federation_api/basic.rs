@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 
 use crate::protocol::events::EventBuilder;
 use crate::protocol::{
-    DagChunkFragment, Event, Handler, RoomVersion, RoomVersion3, RoomVersion4,
+    DagChunkFragment, Event, Handler, PersistEventInfo, RoomVersion,
+    RoomVersion3, RoomVersion4,
 };
 use crate::state_map::StateMap;
 use crate::stores::StoreFactory;
@@ -23,16 +24,37 @@ fn to_value(
     }
 }
 
-pub struct StandardFederationAPI<F> {
+pub trait Hooks: Sync + Send + 'static {
+    fn on_new_events<R: RoomVersion>(
+        &self,
+        _infos: &[PersistEventInfo<R, StateMap<String>>],
+    ) -> BoxFuture<FederationResult<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn on_send_join<R: RoomVersion>(
+        &self,
+        _user_id: String,
+    ) -> BoxFuture<FederationResult<()>> {
+        async { Ok(()) }.boxed()
+    }
+}
+
+impl Hooks for () {}
+
+#[derive(Clone)]
+pub struct StandardFederationAPI<F, H = ()> {
     stores: F,
     server_name: String,
     key_id: String,
     secret_key: SecretKey,
+    hooks: H,
 }
 
-impl<F> FederationAPI for StandardFederationAPI<F>
+impl<F, H> FederationAPI for StandardFederationAPI<F, H>
 where
     F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    H: Hooks,
 {
     fn on_make_join<R: RoomVersion>(
         &self,
@@ -43,11 +65,21 @@ where
         let room_store = self.stores.get_room_store::<R>();
 
         async move {
-            let prev_event_ids = room_store
+            let prev_event_ids: Vec<_> = room_store
                 .get_forward_extremities(room_id.clone())
                 .await?
                 .into_iter()
                 .collect();
+
+            if prev_event_ids.is_empty() {
+                return Err(FederationAPIError::HttpResponse(
+                    http::Response::builder()
+                        .status(404)
+                        .header("Content-Type", "application/json")
+                        .body(b"{}".to_vec())
+                        .expect("valid http response"),
+                ));
+            }
 
             let mut event = EventBuilder::new(
                 room_id,
@@ -88,9 +120,6 @@ where
         async move {
             let event_id = event.event_id().to_string();
 
-            let _event_origin =
-                event.sender().splitn(2, ':').last().unwrap().to_string();
-
             let chunk = DagChunkFragment::from_event(event.clone());
             let handler = Handler::new(self.stores.clone());
             let mut stuff = handler.handle_chunk::<R>(chunk).await?;
@@ -110,6 +139,10 @@ where
 
                 room_store.insert_new_event(info.event.clone()).await?;
             }
+
+            self.hooks
+                .on_send_join::<R>(event.sender().to_string())
+                .await?;
 
             let state = event_store.get_state_for(&[&event_id]).await?.unwrap();
             let state_events = event_store
@@ -194,10 +227,27 @@ where
     }
 }
 
-impl<F> StandardFederationAPI<F>
+impl<F, H> StandardFederationAPI<F, H>
 where
     F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    H: Hooks,
 {
+    pub fn new(
+        stores: F,
+        server_name: String,
+        key_id: String,
+        secret_key: SecretKey,
+        hooks: H,
+    ) -> StandardFederationAPI<F, H> {
+        StandardFederationAPI {
+            stores,
+            server_name,
+            key_id,
+            secret_key,
+            hooks,
+        }
+    }
+
     async fn handle_incoming_events<R: RoomVersion>(
         &self,
         raw_events: Vec<Value>,
@@ -249,6 +299,8 @@ where
                     stuff.iter().map(|i| i.event.clone()).collect(),
                 )
                 .await?;
+
+            self.hooks.on_new_events(&stuff).await?;
 
             for info in &stuff {
                 info!(

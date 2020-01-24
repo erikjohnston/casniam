@@ -180,8 +180,6 @@ dependencies = [
  "futures 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-util 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "http 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "http-service 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "http-service-hyper 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.13.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-tls 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "indolentjson 0.1.0 (git+https://github.com/NegativeMjark/indolentjson-rust.git)",
