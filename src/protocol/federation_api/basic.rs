@@ -231,7 +231,7 @@ where
                 continue;
             }
 
-            let stuff = handler.handle_chunk::<R>(chunk).await?;
+            let stuff = handler.handle_chunk::<R>(chunk.clone()).await?;
 
             event_store
                 .insert_events(
@@ -249,6 +249,14 @@ where
                     stuff.iter().map(|i| i.event.clone()).collect(),
                 )
                 .await?;
+
+            for info in &stuff {
+                info!(
+                    "Stored event {} from {}",
+                    info.event.event_id(),
+                    info.event.sender()
+                );
+            }
         }
 
         Ok(())
