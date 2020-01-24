@@ -623,7 +623,7 @@ async fn main() -> std::io::Result<()> {
         tide::Response::new(200).body_json(&body).unwrap()
     };
 
-    let mut app = tide::with_state(app_data);
+    let mut app = tide::with_state(app_data.clone());
 
     app.middleware(MiddlewareLogger);
 
@@ -758,9 +758,42 @@ async fn main() -> std::io::Result<()> {
         }.unwrap_or_else(|e| e.into_response()),
     );
 
-    app.listen("127.0.0.1:9998").await?;
-    Ok(())
+    // app.listen("127.0.0.1:9998").await?;
+    // Ok(());
 
+    let http_server = actix_web::HttpServer::new(move || {
+        actix_web::App::new()
+            .data(app_data.clone())
+            .app_data(app_data.clone())
+            .wrap(actix_web::middleware::Logger::default())
+            .route(
+                "/_matrix/key/v2/server",
+                actix_web::web::get().to(
+                    |app_data: actix_web::web::Data<AppData>| async move {
+                        let body = app_data.key_server_servlet.make_body();
+
+                        Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+                    },
+                ),
+            )
+    })
+    .bind("127.0.0.1:9998")
+    .unwrap();
+
+    // let mut sys = actix_rt::System::new("casniam");
+
+    // let _ = sys.block_on(async move { http_server.run().await });
+
+    let local = tokio::task::LocalSet::new();
+
+    let fut = actix_rt::System::run_in_tokio("casniam", &local);
+    local.spawn_local(fut);
+
+    local
+        .run_until(async move { http_server.run().await })
+        .await;
+
+    Ok(())
     // let mut file = File::open("identity.pfx").unwrap();
     // let mut identity = vec![];
     // file.read_to_end(&mut identity).unwrap();

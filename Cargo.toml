@@ -30,10 +30,12 @@ futures-util = "0.3.0"
 bytes = "0.5.0"
 percent-encoding = "2.1.0"
 serde_derive = "1.0.102"
+actix-web = "2.0.0"
+actix-rt = "1.0.0"
 
 [dependencies.tokio]
 version = "0.2.4"
-features = ["net", "rt-threaded", "macros"]
+features = ["net", "rt-threaded", "macros", "rt-util"]
 
 
 [dependencies.indolentjson]
