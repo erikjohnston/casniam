@@ -31,7 +31,7 @@ use casniam::protocol::{
     RoomVersion4,
 };
 use casniam::state_map::StateMap;
-use casniam::stores::{memory, EventStore, RoomStore};
+use casniam::stores::{memory, EventStore, RoomStore, StoreFactory};
 
 fn to_value(
     value: serde_json::Value,
@@ -486,6 +486,11 @@ impl AppData {
         let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
             .timestamp_millis() as u64;
 
+        self.stores
+            .get_room_version_store()
+            .set_room_version(&room_id, R::VERSION)
+            .await?;
+
         let builders = vec![
             EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
                 .origin_server_ts(yesterday)
@@ -581,7 +586,7 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
     )
     .route(
         "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
-        actix_web::web::put().to(
+        actix_web::web::get().to(
             |(state, path): (
                 actix_web::web::Data<AppData>,
                 actix_web::web::Path<(String, String)>,
@@ -607,7 +612,7 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         ),
     )
     .route(
-        "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
+        "/_matrix/federation/v2/send_join/{room_id}/{event_id}",
         actix_web::web::put().to(
             |(state, path, body): (
                 actix_web::web::Data<AppData>,

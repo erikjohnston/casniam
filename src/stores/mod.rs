@@ -194,4 +194,10 @@ pub trait RoomVersionStore: Send + Sync {
         &self,
         room_id: &str,
     ) -> BoxFuture<Result<Option<&'static str>, Error>>;
+
+    fn set_room_version(
+        &self,
+        room_id: &str,
+        version: &'static str,
+    ) -> BoxFuture<Result<(), Error>>;
 }

@@ -229,6 +229,16 @@ impl RoomVersionStore for MemoryRoomVersionStore {
 
         future::ok(map.get(room_id).copied()).boxed()
     }
+
+    fn set_room_version(
+        &self,
+        room_id: &str,
+        version: &'static str,
+    ) -> BoxFuture<Result<(), Error>> {
+        let mut map = self.room_version_map.write().expect("room version map");
+        map.insert(room_id.to_string(), version);
+        future::ok(()).boxed()
+    }
 }
 
 #[derive(Debug, Clone)]

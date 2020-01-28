@@ -359,7 +359,9 @@ where
         let backwards: Vec<_> =
             event.prevs().iter().map(|&e| e.to_string()).collect();
 
-        if backwards.iter().all(|e| self.event_ids.contains(e)) {
+        if self.event_ids.is_empty()
+            || backwards.iter().all(|e| self.event_ids.contains(e))
+        {
             for e in &backwards {
                 self.forward_extremities.remove(e);
             }
