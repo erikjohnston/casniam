@@ -22,7 +22,7 @@ use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::federation_api::{
-    basic::StandardFederationAPI, FederationAPI,
+    basic::StandardFederationAPI, FederationAPI, TransactionRequest,
 };
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
@@ -558,6 +558,139 @@ impl AppData {
     }
 }
 
+fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
+    cfg.route(
+        "/_matrix/key/v2/server",
+        actix_web::web::get().to(
+            |app_data: actix_web::web::Data<AppData>| async move {
+                let body = app_data.key_server_servlet.make_body();
+
+                Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+            },
+        ),
+    )
+    .route(
+        "/_matrix/key/v2/server/{key}",
+        actix_web::web::get().to(
+            |app_data: actix_web::web::Data<AppData>| async move {
+                let body = app_data.key_server_servlet.make_body();
+
+                Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+            },
+        ),
+    )
+    .route(
+        "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
+        actix_web::web::put().to(
+            |(state, path): (
+                actix_web::web::Data<AppData>,
+                actix_web::web::Path<(String, String)>,
+            )| {
+                async move {
+                    let app_data: &AppData = &state;
+
+                    let room_id =
+                        percent_decode_str(&path.0).decode_utf8()?.into_owned();
+
+                    let user_id =
+                        percent_decode_str(&path.1).decode_utf8()?.into_owned();
+
+                    let response = app_data
+                        .federation_api
+                        .on_make_join::<RoomVersion4>(room_id, user_id)
+                        .await
+                        .unwrap(); // FIXME
+
+                    Ok(actix_web::web::Json(response)) as actix_web::Result<_>
+                }
+            },
+        ),
+    )
+    .route(
+        "/_matrix/federation/v1/send_join/{room_id}/{event_id}",
+        actix_web::web::put().to(
+            |(state, path, body): (
+                actix_web::web::Data<AppData>,
+                actix_web::web::Path<(String, String)>,
+                actix_web::web::Json<serde_json::Value>,
+            )| {
+                async move {
+                    let app_data: &AppData = &state;
+
+                    let room_id =
+                        percent_decode_str(&path.0).decode_utf8()?.into_owned();
+
+                    let event: <RoomVersion4 as RoomVersion>::Event =
+                        serde_json::from_value(body.0)?;
+
+                    let response = app_data
+                        .federation_api
+                        .on_send_join::<RoomVersion4>(room_id, event)
+                        .await
+                        .unwrap(); // FIXME
+
+                    Ok(actix_web::web::Json(response)) as actix_web::Result<_>
+                }
+            },
+        ),
+    )
+    .route(
+        "/_matrix/federation/v1/send/{txn_id}",
+        actix_web::web::put().to(
+            |(state, _path, body): (
+                actix_web::web::Data<AppData>,
+                actix_web::web::Path<(String,)>,
+                actix_web::web::Json<serde_json::Value>,
+            )| {
+                async move {
+                    let app_data: &AppData = &state;
+
+                    let transaction: TransactionRequest =
+                        serde_json::from_value(body.0)?;
+
+                    let response = app_data
+                        .federation_api
+                        .on_send(transaction)
+                        .await
+                        .unwrap(); // FIXME
+
+                    Ok(actix_web::web::Json(response)) as actix_web::Result<_>
+                }
+            },
+        ),
+    )
+    .route(
+        "/_matrix/federation/v1/query/directory",
+        actix_web::web::get().to(
+            |(state, query): (
+                actix_web::web::Data<AppData>,
+                actix_web::web::Query<RoomAliasQuery>,
+            )| {
+                async move {
+                    let app_data: &AppData = &state;
+
+                    let room_id = format!(
+                        "!{}:{}",
+                        base64::encode_config(
+                            &Sha256::digest(query.room_alias.as_bytes()),
+                            base64::URL_SAFE_NO_PAD
+                        ),
+                        state.server_name.clone(),
+                    );
+
+                    // Now create the room.
+                    app_data
+                        .clone()
+                        .generate_room::<RoomVersion4>(room_id.clone())
+                        .await?;
+
+                    Ok(actix_web::web::Json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))) as actix_web::Result<_>
+                }
+            },
+        ),
+    );
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -766,29 +899,14 @@ async fn main() -> std::io::Result<()> {
             .data(app_data.clone())
             .app_data(app_data.clone())
             .wrap(actix_web::middleware::Logger::default())
-            .route(
-                "/_matrix/key/v2/server",
-                actix_web::web::get().to(
-                    |app_data: actix_web::web::Data<AppData>| async move {
-                        let body = app_data.key_server_servlet.make_body();
-
-                        Ok(actix_web::web::Json(body)) as actix_web::Result<_>
-                    },
-                ),
-            )
+            .configure(add_routes)
     })
     .bind("127.0.0.1:9998")
     .unwrap();
 
-    // let mut sys = actix_rt::System::new("casniam");
-
-    // let _ = sys.block_on(async move { http_server.run().await });
-
     let local = tokio::task::LocalSet::new();
-
     let fut = actix_rt::System::run_in_tokio("casniam", &local);
     local.spawn_local(fut);
-
     local
         .run_until(async move { http_server.run().await })
         .await?;
