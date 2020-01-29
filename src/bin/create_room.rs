@@ -3,9 +3,8 @@
 use std::collections::BTreeMap;
 
 use failure::Error;
-use failure::ResultExt as _;
-use futures::{FutureExt, TryFutureExt};
-
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use log::info;
 use percent_encoding::percent_decode_str;
 use rand::distributions::Alphanumeric;
@@ -16,13 +15,13 @@ use sha2::Digest;
 use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 use tide;
-use tide::{IntoResponse, ResultExt};
 
 use casniam::protocol::client::MemoryTransactionSender;
 use casniam::protocol::client::TransactionSender;
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::federation_api::{
-    basic::StandardFederationAPI, FederationAPI, TransactionRequest,
+    basic::Hooks, basic::StandardFederationAPI, FederationAPI,
+    FederationResult, TransactionRequest,
 };
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
@@ -56,74 +55,30 @@ where
 }
 
 #[derive(Clone)]
-struct AppData {
+struct BasicHooks {
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
     stores: memory::MemoryStoreFactory,
     federation_sender: MemoryTransactionSender,
-    key_server_servlet: KeyServerServlet,
-    federation_api: StandardFederationAPI<memory::MemoryStoreFactory>,
 }
 
-impl AppData {
-    fn get_database<R: RoomVersion>(
+impl Hooks for BasicHooks {
+    fn on_new_events<R: RoomVersion>(
         &self,
-    ) -> memory::MemoryEventStore<R, StateMap<String>> {
-        self.stores.get_memory_store::<R>()
-    }
+        infos: &[PersistEventInfo<R, StateMap<String>>],
+    ) -> BoxFuture<FederationResult<()>> {
+        let infos = infos.to_vec();
 
-    /// Gets called on `/send/` requests
-    async fn on_received_transaction<R>(
-        self,
-        txn: Transaction<R>,
-    ) -> Result<tide::Response, Error>
-    where
-        R: RoomVersion,
-        R::Event: Serialize + DeserializeOwned,
-    {
-        let database = self.get_database::<R>();
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
 
-        let chunks = DagChunkFragment::from_events(txn.pdus.to_vec());
-        let handler = Handler::new(self.stores.clone());
-
-        for chunk in chunks {
-            let room_id = chunk.events[0].room_id().to_string();
-
-            if database
-                .get_forward_extremities(room_id.clone())
-                .await?
-                .is_empty()
-            {
-                // Ignore events for rooms we're not in for now.
-                info!("Ignoring events for unknown room {}", &room_id);
-                continue;
-            }
-
-            let stuff = handler.handle_chunk::<R>(chunk).await?;
-
-            database
-                .insert_events(
-                    stuff
-                        .iter()
-                        .map(|info| {
-                            (info.event.clone(), info.state_before.clone())
-                        })
-                        .collect(),
-                )
-                .await?;
-
-            database
-                .insert_new_events(
-                    stuff.iter().map(|i| i.event.clone()).collect(),
-                )
-                .await?;
-
-            for info in stuff {
+        async move {
+            for info in infos {
                 if info.event.event_type() == "m.room.message" {
                     let room_id = info.event.room_id().to_string();
 
-                    let extrems: Vec<_> = database
+                    let extrems: Vec<_> = room_store
                         .get_forward_extremities(room_id.clone())
                         .await?
                         .into_iter()
@@ -138,7 +93,7 @@ impl AppData {
                         .unwrap()
                         .to_string();
 
-                    let state = database
+                    let state = event_store
                         .get_state_for(
                             &extrems
                                 .iter()
@@ -161,7 +116,7 @@ impl AppData {
                     let mut event = builder
                         .with_prev_events(extrems)
                         .origin(self.server_name.clone())
-                        .build(&database)
+                        .build(event_store.as_ref())
                         .await?;
 
                     event.sign(
@@ -170,9 +125,11 @@ impl AppData {
                         &self.secret_key,
                     );
 
-                    database.insert_event(event.clone(), state.clone()).await?;
+                    event_store
+                        .insert_event(event.clone(), state.clone())
+                        .await?;
 
-                    database.insert_new_event(event.clone()).await?;
+                    room_store.insert_new_event(event.clone()).await?;
 
                     info!("Sending echo event to {}", event_origin);
 
@@ -182,196 +139,135 @@ impl AppData {
                         .unwrap();
                 }
             }
+            Ok(())
         }
+        .boxed()
+    }
+}
 
-        Ok(tide::Response::new(200).body_json(&json!({})).unwrap())
+#[derive(Clone)]
+struct AppData {
+    server_name: String,
+    key_id: String,
+    secret_key: sign::SecretKey,
+    stores: memory::MemoryStoreFactory,
+    federation_sender: MemoryTransactionSender,
+    key_server_servlet: KeyServerServlet,
+    federation_api:
+        StandardFederationAPI<memory::MemoryStoreFactory, BasicHooks>,
+}
+
+impl AppData {
+    fn get_database<R: RoomVersion>(
+        &self,
+    ) -> memory::MemoryEventStore<R, StateMap<String>> {
+        self.stores.get_memory_store::<R>()
     }
 
-    /// Called `/backfill` requests
-    async fn get_backfill<R>(
-        self,
-        event_ids: Vec<String>,
-        limit: usize,
-    ) -> Result<tide::Response, Error>
-    where
-        R: RoomVersion,
-        R::Event: Serialize,
-    {
-        let events = self
-            .get_database::<R>()
-            .get_backfill(event_ids, limit)
-            .await?;
-
-        Ok(tide::Response::new(200)
-            .body_json(&json!({
-                "pdus": events,
-            }))
-            .unwrap())
-    }
-
-    async fn make_join<R>(
+    async fn send_some_events<R>(
         self,
         room_id: String,
-        user_id: String,
-    ) -> Result<tide::Response, Error>
-    where
-        R: RoomVersion + Send,
-        R::Event: Serialize + Send,
-    {
-        let response = self
-            .federation_api
-            .on_make_join::<R>(room_id, user_id)
-            .await
-            .unwrap(); // FIXME
-
-        Ok(tide::Response::new(200).body_json(&response).unwrap())
-    }
-
-    async fn send_join<R>(
-        self,
-        room_id: String,
-        event: R::Event,
-    ) -> Result<tide::Response, Error>
+        remote: String,
+    ) -> Result<(), Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
     {
         let database = self.get_database::<R>();
 
-        let event_id = event.event_id().to_string();
+        let creator = format!("@alice:{}", self.server_name);
 
-        let event_origin =
-            event.sender().splitn(2, ':').last().unwrap().to_string();
+        let builder = EventBuilder::new(
+            &room_id,
+            &creator,
+            "m.room.message",
+            None as Option<String>,
+        )
+        .with_content(to_value(json!({
+            "msgtype": "m.text",
+            "body": "Hello! I don't actually have anything to say to you right now...",
+        })));
 
-        let chunk = DagChunkFragment::from_event(event.clone());
-        let handler = Handler::new(self.stores.clone());
-        let mut stuff = handler.handle_chunk::<R>(chunk).await?;
+        //let chunk = self.clone().generate_chunk::<R>(room_id.clone(), [builder]).await?;
 
-        for info in &mut stuff {
-            assert!(!info.rejected);
+        let prev_events: Vec<_> = database
+            .get_forward_extremities(room_id.clone())
+            .await?
+            .into_iter()
+            .collect();
 
-            info.event.sign(
-                self.server_name.clone(),
-                self.key_id.clone(),
-                &self.secret_key,
-            );
-
-            database
-                .insert_event(info.event.clone(), info.state_before.clone())
-                .await?;
-
-            database.insert_new_event(info.event.clone()).await?;
-        }
-
-        let state = database.get_state_for(&[&event_id]).await?.unwrap();
-        let state_events = database
-            .get_events(&state.values().map(|e| e as &str).collect::<Vec<_>>())
-            .await?;
-
-        let resp = tide::Response::new(200)
-            .body_json(&json!([200, {
-                "origin": self.server_name,
-                "state": state_events.clone(),
-                "auth_chain": state_events,
-            }]))
+        let state = database
+            .get_state_for(
+                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
+            )
+            .await?
             .unwrap();
 
-        let send_fut = async move {
-            self.federation_sender
-                .send_event::<R>(event_origin.clone(), event)
-                .await?;
+        let mut event = builder
+            .with_prev_events(prev_events)
+            .origin(self.server_name.clone())
+            .build(&database)
+            .await?;
 
-            let creator = format!("@alice:{}", self.server_name);
+        event.sign(
+            self.server_name.clone(),
+            self.key_id.clone(),
+            &self.secret_key,
+        );
 
-            let builder = EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.message",
-                None as Option<String>,
+        database.insert_event(event.clone(), state.clone()).await?;
+
+        database.insert_new_event(event.clone()).await?;
+
+        info!("Sending 'hello' event to {}", remote);
+
+        self.federation_sender
+            .send_event::<R>(remote.clone(), event.clone())
+            .await?;
+
+        tokio::time::delay_for(std::time::Duration::from_secs(30)).await;
+
+        let builder = EventBuilder::new(
+            &room_id,
+            &creator,
+            "m.room.member",
+            Some(creator.clone()),
+        )
+        .with_content(to_value(json!({
+            "membership": "leave",
+        })));
+
+        let prev_events = vec![event.event_id().to_string()];
+        let state = database
+            .get_state_for(
+                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
-            .with_content(to_value(json!({
-                "msgtype": "m.text",
-                "body": "Hello! I don't actually have anything to say to you right now...",
-            })));
+            .await?
+            .unwrap();
 
-            //let chunk = self.clone().generate_chunk::<R>(room_id.clone(), [builder]).await?;
+        let mut event = builder
+            .with_prev_events(prev_events)
+            .origin(self.server_name.clone())
+            .build(&database)
+            .await?;
 
-            let prev_events: Vec<_> = database.get_forward_extremities(room_id.clone()).await?.into_iter().collect();
+        event.sign(
+            self.server_name.clone(),
+            self.key_id.clone(),
+            &self.secret_key,
+        );
 
-            let state =
-                database.get_state_for(&prev_events.iter()
-                                .map(|e| e as &str)
-                                .collect::<Vec<_>>()).await?.unwrap();
+        database.insert_event(event.clone(), state.clone()).await?;
 
-            let mut event = builder
-                .with_prev_events(prev_events)
-                .origin(self.server_name.clone())
-                .build(&database)
-                .await?;
+        database.insert_new_event(event.clone()).await?;
 
-            event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);
+        info!("Sending 'leave' event to {}", remote);
 
-            database.insert_event(
-                event.clone(),
-                state.clone(),
-            ).await?;
+        self.federation_sender
+            .send_event::<R>(remote, event)
+            .await?;
 
-            database.insert_new_event(
-                event.clone(),
-            ).await?;
-
-            info!("Sending 'hello' event to {}", event_origin);
-
-            self.federation_sender
-                .send_event::<R>(event_origin.clone(), event.clone())
-                .await?;
-
-            tokio::time::delay_for(std::time::Duration::from_secs(30)).await;
-
-            let builder = EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.member",
-                Some(creator.clone()),
-            )
-            .with_content(to_value(json!({
-                "membership": "leave",
-            })));
-
-            let prev_events = vec![event.event_id().to_string()];
-            let state =
-                database.get_state_for(&prev_events.iter()
-                .map(|e| e as &str)
-                .collect::<Vec<_>>()).await?.unwrap();
-
-            let mut event = builder
-                .with_prev_events(prev_events)
-                .origin(self.server_name.clone())
-                .build(&database)
-                .await?;
-
-            event.sign(self.server_name.clone(), self.key_id.clone(), &self.secret_key);
-
-            database.insert_event(
-                event.clone(),
-                state.clone(),
-            ).await?;
-
-            database.insert_new_event(
-                event.clone(),
-            ).await?;
-
-            info!("Sending 'leave' event to {}", event_origin);
-
-            self.federation_sender.send_event::<R>(event_origin, event).await?;
-
-            Ok(())
-        }
-        .boxed();
-
-        tokio::spawn(send_fut.map(|_: Result<_, Error>| ()));
-
-        Ok(resp)
+        Ok(())
     }
 
     /// Create a new chunk from a set of builders. Doesn't persist.
@@ -620,7 +516,7 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                 actix_web::web::Json<serde_json::Value>,
             )| {
                 async move {
-                    let app_data: &AppData = &state;
+                    let app_data: AppData = state.as_ref().clone();
 
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
@@ -628,11 +524,27 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                     let event: <RoomVersion4 as RoomVersion>::Event =
                         serde_json::from_value(body.0)?;
 
+                    let event_origin = event
+                        .sender()
+                        .splitn(2, ':')
+                        .last()
+                        .unwrap()
+                        .to_string();
+
+                    app_data.federation_sender
+                        .send_event::<RoomVersion4>(event_origin.clone(), event.clone())
+                        .await
+                        .unwrap();
+
                     let response = app_data
                         .federation_api
-                        .on_send_join::<RoomVersion4>(room_id, event)
+                        .on_send_join::<RoomVersion4>(room_id.clone(), event)
                         .await
                         .unwrap(); // FIXME
+
+                    tokio::spawn(async move{
+                        app_data.send_some_events::<RoomVersion4>(room_id, event_origin).await.ok();
+                    });
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
@@ -693,6 +605,43 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                 }
             },
         ),
+    ).route(
+        "/_matrix/federation/v1/backfill/{room_id}",
+        actix_web::web::get().to(
+            |(state, path, query): (
+                actix_web::web::Data<AppData>,
+                actix_web::web::Path<(String,)>,
+                actix_web::web::Query<Vec<(String, String)>>,
+            )| {
+                async move {
+                    let app_data: &AppData = &state;
+                    let room_id = path.0.clone();
+
+                    let mut event_ids = Vec::new();
+                    let mut limit = 100;
+
+                    for (key, value) in query.iter() {
+                        match key as &str {
+                            "v" => event_ids.push(value.clone()),
+                            "limit" => {
+                                if let Ok(l) = value.clone().parse() {
+                                    limit = l
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let response = app_data
+                        .federation_api
+                        .on_backfill::<RoomVersion4>(room_id, event_ids, limit)
+                        .await
+                        .unwrap(); // FIXME
+
+                    Ok(actix_web::web::Json(response)) as actix_web::Result<_>
+                }
+            },
+        ),
     );
 }
 
@@ -738,12 +687,20 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    let hooks = BasicHooks {
+        server_name: server_name.clone(),
+        key_id: key_id.clone(),
+        secret_key: secret_key.clone(),
+        federation_sender: federation_sender.clone(),
+        stores: stores.clone(),
+    };
+
     let federation_api = StandardFederationAPI::new(
         stores.clone(),
         server_name.clone(),
         key_id.clone(),
         secret_key.clone(),
-        (),
+        hooks,
     );
 
     let app_data = AppData {
@@ -755,149 +712,6 @@ async fn main() -> std::io::Result<()> {
         stores,
         federation_api,
     };
-
-    let key_render = |ctx: tide::Request<AppData>| async move {
-        let body = ctx.state().key_server_servlet.make_body();
-        tide::Response::new(200).body_json(&body).unwrap()
-    };
-
-    let mut app = tide::with_state(app_data.clone());
-
-    app.middleware(MiddlewareLogger);
-
-    app.at("/_matrix/key/v2/server").get(key_render);
-    app.at("/_matrix/key/v2/server/:key*").get(key_render);
-
-    app.at("/_matrix/federation/v1/make_join/:room_id/:user_id")
-        .get(|ctx: tide::Request<AppData>| {
-            async move {
-                let state = ctx.state().clone();
-                let room_id: String = ctx.param("room_id").client_err()?;
-                let user_id: String = ctx.param("user_id").client_err()?;
-
-                let room_id = percent_decode_str(&room_id)
-                    .decode_utf8()
-                    .client_err()?
-                    .into_owned();
-
-                let user_id = percent_decode_str(&user_id)
-                    .decode_utf8()
-                    .client_err()?
-                    .into_owned();
-
-                state
-                    .make_join::<RoomVersion4>(room_id, user_id)
-                    .await
-                    .compat()
-                    .server_err()
-            }
-            .unwrap_or_else(|e| e.into_response())
-        });
-
-    app.at("/_matrix/federation/v1/send_join/:room_id/:event_id")
-        .put(|mut ctx: tide::Request<AppData>| {
-            async move {
-                let room_id: String = ctx.param("room_id").client_err()?;
-                let event = ctx.body_json().await.client_err()?;
-                let state = ctx.state();
-
-                let room_id = percent_decode_str(&room_id)
-                    .decode_utf8()
-                    .client_err()?
-                    .into_owned();
-
-                state
-                    .clone()
-                    .send_join::<RoomVersion4>(room_id, event)
-                    .await
-                    .compat()
-                    .server_err()
-            }
-            .unwrap_or_else(|e| e.into_response())
-        });
-
-    app.at("/_matrix/federation/v1/send/:txn_id").put(
-        |mut ctx: tide::Request<AppData>| {
-            async move {
-                let txn = ctx.body_json().await.client_err()?;
-                let state = ctx.state();
-
-                state
-                    .clone()
-                    .on_received_transaction::<RoomVersion4>(txn)
-                    .await
-                    .compat()
-                    .server_err()
-            }
-            .unwrap_or_else(|e| e.into_response())
-        },
-    );
-
-    app.at("/_matrix/federation/v1/backfill/:room_id").get(
-        |ctx: tide::Request<AppData>| {
-            async move {
-                let state = ctx.state();
-
-                let mut event_ids = Vec::new();
-                let mut limit = 100;
-
-                for (key, value) in ctx.query::<Vec<(String, String)>>()? {
-                    match &*key {
-                        "v" => event_ids.push(value),
-                        "limit" => {
-                            if let Ok(l) = value.parse() {
-                                limit = l
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                info!("Got backfill request with ids: {:?}", event_ids);
-
-                state
-                    .clone()
-                    .get_backfill::<RoomVersion4>(event_ids, limit)
-                    .await
-                    .compat()
-                    .server_err()
-            }
-            .unwrap_or_else(|e| e.into_response())
-        },
-    );
-
-    app.at("/_matrix/federation/v1/query/directory").get(
-        |ctx: tide::Request<AppData>| async move {
-            let state = ctx.state();
-
-            let query: RoomAliasQuery = ctx.query()?;
-
-            let room_id = format!(
-                "!{}:{}",
-                base64::encode_config(
-                    &Sha256::digest(query.room_alias.as_bytes()),
-                    base64::URL_SAFE_NO_PAD
-                ),
-                state.server_name.clone(),
-            );
-
-            // Now create the room.
-            state
-                .clone()
-                .generate_room::<RoomVersion4>(room_id.clone())
-                .await
-                .compat()
-                .server_err()?;
-
-            Ok(tide::Response::new(200)
-            .body_json(
-                &json!({ "room_id": room_id, "servers": &[&state.server_name] }),
-            ).unwrap()) as Result<_, tide::Error>
-        }.unwrap_or_else(|e| e.into_response()),
-    );
-
-    // app.listen("127.0.0.1:9998").await?;
-    // Ok(());
 
     let http_server = actix_web::HttpServer::new(move || {
         actix_web::App::new()
