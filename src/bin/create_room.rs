@@ -379,6 +379,8 @@ impl AppData {
     {
         let creator = format!("@alice:{}", &self.server_name);
 
+        info!("Generating room for {}", room_id);
+
         let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
             .timestamp_millis() as u64;
 
@@ -565,13 +567,13 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                     let transaction: TransactionRequest =
                         serde_json::from_value(body.0)?;
 
-                    let response = app_data
+                    app_data
                         .federation_api
                         .on_send(transaction)
                         .await
                         .unwrap(); // FIXME
 
-                    Ok(actix_web::web::Json(response)) as actix_web::Result<_>
+                    Ok(actix_web::web::Json(json!({}))) as actix_web::Result<_>
                 }
             },
         ),
@@ -595,11 +597,13 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                         state.server_name.clone(),
                     );
 
-                    // Now create the room.
-                    app_data
-                        .clone()
-                        .generate_room::<RoomVersion4>(room_id.clone())
-                        .await?;
+                    if app_data.stores.get_room_version_store().get_room_version(&room_id).await.unwrap().is_none() {
+                        // Now create the room if it doesn't exist.
+                        app_data
+                            .clone()
+                            .generate_room::<RoomVersion4>(room_id.clone())
+                            .await?;
+                    }
 
                     Ok(actix_web::web::Json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))) as actix_web::Result<_>
                 }
