@@ -675,8 +675,7 @@ async fn main() -> std::io::Result<()> {
 
     let stores = memory::MemoryStoreFactory::new();
 
-    let (resolver, fut) = MatrixResolver::new().unwrap();
-    tokio::spawn(fut.map(|_| ()));
+    let resolver = MatrixResolver::new().await.unwrap();
 
     let federation_sender = {
         let client = hyper::Client::builder()

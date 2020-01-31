@@ -1,5 +1,4 @@
 use failure::Error;
-use futures::compat::Future01CompatExt;
 use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use http::Uri;
@@ -34,35 +33,28 @@ pub struct Endpoint {
 
 #[derive(Clone)]
 pub struct MatrixResolver {
-    resolver: trust_dns_resolver::AsyncResolver,
+    resolver: trust_dns_resolver::TokioAsyncResolver,
     http_client: Client<HttpsConnector<HttpConnector>>,
 }
 
 impl MatrixResolver {
-    pub fn new(
-    ) -> Result<(MatrixResolver, impl Future<Output = ()>), failure::Error>
-    {
+    pub async fn new() -> Result<MatrixResolver, failure::Error> {
         let http_client = hyper::Client::builder().build(HttpsConnector::new());
 
-        MatrixResolver::with_client(http_client)
+        MatrixResolver::with_client(http_client).await
     }
 
-    pub fn with_client(
+    pub async fn with_client(
         http_client: Client<HttpsConnector<HttpConnector>>,
-    ) -> Result<(MatrixResolver, impl Future<Output = ()>), failure::Error>
-    {
-        let (resolver, background_future) =
-            trust_dns_resolver::AsyncResolver::from_system_conf()?;
+    ) -> Result<MatrixResolver, failure::Error> {
+        let resolver =
+            trust_dns_resolver::TokioAsyncResolver::tokio_from_system_conf()
+                .await?;
 
-        let fut = background_future.compat().map(|_| ());
-
-        Ok((
-            MatrixResolver {
-                resolver,
-                http_client,
-            },
-            fut,
-        ))
+        Ok(MatrixResolver {
+            resolver,
+            http_client,
+        })
     }
 
     /// Does SRV lookup
@@ -117,7 +109,7 @@ impl MatrixResolver {
             }]);
         }
 
-        let records = self.resolver.lookup_srv(host.as_ref()).compat().await?;
+        let records = self.resolver.srv_lookup(host.as_ref()).await?;
 
         let mut priority_map: BTreeMap<u16, Vec<_>> = BTreeMap::new();
 
