@@ -31,15 +31,6 @@ use casniam::protocol::{
 use casniam::state_map::StateMap;
 use casniam::stores::{memory, EventStore, RoomStore, StoreFactory};
 
-fn to_value(
-    value: serde_json::Value,
-) -> serde_json::Map<String, serde_json::Value> {
-    match value {
-        serde_json::Value::Object(value) => value,
-        _ => panic!("Expected json map"),
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 struct RoomAliasQuery {
     room_alias: String,
@@ -101,22 +92,19 @@ impl Hooks for BasicHooks {
                         )
                         .await?
                         .unwrap();
-                    let builder = EventBuilder::new(
-                        &room_id,
-                        &creator,
-                        "m.room.message",
-                        None as Option<String>,
-                    )
-                    .with_content(to_value(json!({
-                        "msgtype": "m.text",
-                        "body": "Why are you talking to me??",
-                    })));
 
-                    let mut event = builder
-                        .with_prev_events(extrems)
-                        .origin(self.server_name.clone())
-                        .build(event_store.as_ref())
-                        .await?;
+                    let mut event = EventBuilder::from_json(json!({
+                        "room_id": room_id,
+                        "sender": creator,
+                        "type": "m.room.message",
+                        "content": {
+                            "msgtype": "m.text",
+                            "body": "Why are you talking to me??",
+                        },
+                        "prev_events": extrems,
+                    }))?
+                    .build(event_store.as_ref())
+                    .await?;
 
                     event.sign(
                         self.server_name.clone(),
@@ -176,24 +164,30 @@ impl AppData {
 
         let creator = format!("@alice:{}", self.server_name);
 
-        let builder = EventBuilder::new(
-            &room_id,
-            &creator,
-            "m.room.message",
-            None as Option<String>,
-        )
-        .with_content(to_value(json!({
-            "msgtype": "m.text",
-            "body": "Hello! I don't actually have anything to say to you right now...",
-        })));
-
-        //let chunk = self.clone().generate_chunk::<R>(room_id.clone(), [builder]).await?;
-
         let prev_events: Vec<_> = database
             .get_forward_extremities(room_id.clone())
             .await?
             .into_iter()
             .collect();
+
+        let mut event = EventBuilder::from_json(json!({
+            "room_id": room_id,
+            "sender": creator,
+            "type": "m.room.message",
+            "content": {
+                "msgtype": "m.text",
+                "body": "Hello! I don't actually have anything to say to you right now...",
+            },
+            "prev_events": prev_events,
+        }))?
+        .build(&database)
+        .await?;
+
+        event.sign(
+            self.server_name.clone(),
+            self.key_id.clone(),
+            &self.secret_key,
+        );
 
         let state = database
             .get_state_for(
@@ -201,18 +195,6 @@ impl AppData {
             )
             .await?
             .unwrap();
-
-        let mut event = builder
-            .with_prev_events(prev_events)
-            .origin(self.server_name.clone())
-            .build(&database)
-            .await?;
-
-        event.sign(
-            self.server_name.clone(),
-            self.key_id.clone(),
-            &self.secret_key,
-        );
 
         database.insert_event(event.clone(), state.clone()).await?;
 
@@ -226,35 +208,33 @@ impl AppData {
 
         tokio::time::delay_for(std::time::Duration::from_secs(30)).await;
 
-        let builder = EventBuilder::new(
-            &room_id,
-            &creator,
-            "m.room.member",
-            Some(creator.clone()),
-        )
-        .with_content(to_value(json!({
-            "membership": "leave",
-        })));
-
         let prev_events = vec![event.event_id().to_string()];
-        let state = database
-            .get_state_for(
-                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
-            )
-            .await?
-            .unwrap();
 
-        let mut event = builder
-            .with_prev_events(prev_events)
-            .origin(self.server_name.clone())
-            .build(&database)
-            .await?;
+        let mut event = EventBuilder::from_json(json!({
+            "room_id": room_id,
+            "sender": &creator,
+            "type": "m.room.member",
+            "state_key": &creator,
+            "content": {
+                "membership": "leave",
+            },
+            "prev_events": prev_events,
+        }))?
+        .build(&database)
+        .await?;
 
         event.sign(
             self.server_name.clone(),
             self.key_id.clone(),
             &self.secret_key,
         );
+
+        let state = database
+            .get_state_for(
+                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
+            )
+            .await?
+            .unwrap();
 
         database.insert_event(event.clone(), state.clone()).await?;
 
@@ -389,69 +369,78 @@ impl AppData {
             .await?;
 
         let builders = vec![
-            EventBuilder::new(&room_id, &creator, "m.room.create", Some(""))
-                .origin_server_ts(yesterday)
-                .with_content(to_value(json!({
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.create",
+                "state_key": "",
+                "content": {
+                    "creator": &creator,
                     "room_version": R::VERSION,
-                    "creator": creator,
-                }))),
-            EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.member",
-                Some(&creator),
-            )
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "membership": "join",
-                "displayname": "Alice",
-            }))),
-            EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.power_levels",
-                Some(""),
-            )
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "users": {
-                    &creator: 100,
                 },
-                "users_default": 100,
-                "events": {},
-                "events_default": 0,
-                "state_default": 50,
-                "ban": 50,
-                "kick": 50,
-                "redact": 50,
-                "invite": 0
-            }))),
-            EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.join_rules",
-                Some(""),
-            )
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "join_rule": "public",
-            }))),
-            EventBuilder::new(
-                &room_id,
-                &creator,
-                "m.room.message",
-                None as Option<String>,
-            )
-            .origin_server_ts(yesterday)
-            .with_content(to_value(json!({
-                "msgtype": "m.text",
-                "body": "Are you there?",
-            }))),
+            }),
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.member",
+                "state_key": &creator,
+                "content": {
+                    "membership": "join",
+                    "displayname": "Alice",
+                },
+            }),
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.power_levels",
+                "state_key": "",
+                "content": {
+                    "users": {
+                        &creator: 100,
+                    },
+                    "users_default": 100,
+                    "events": {},
+                    "events_default": 0,
+                    "state_default": 50,
+                    "ban": 50,
+                    "kick": 50,
+                    "redact": 50,
+                    "invite": 0
+                },
+            }),
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.join_rules",
+                "state_key": "",
+                "content": {
+                    "join_rule": "public",
+                },
+            }),
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.message",
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "Are you there?",
+                },
+            }),
         ];
 
         let chunk = self
             .clone()
-            .generate_chunk::<R, _>(room_id, builders)
+            .generate_chunk::<R, _>(
+                room_id,
+                builders
+                    .into_iter()
+                    .map(|j| EventBuilder::from_json(j).expect("valid json")),
+            )
             .await?;
 
         let stuff = self.clone().handle_chunk::<R>(chunk).await?;
