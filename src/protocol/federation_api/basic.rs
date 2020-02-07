@@ -51,6 +51,12 @@ pub struct StandardFederationAPI<F, H = ()> {
     hooks: H,
 }
 
+impl<F, H> StandardFederationAPI<F, H> {
+    pub fn hook(&self) -> &H {
+        &self.hooks
+    }
+}
+
 impl<F, H> FederationAPI for StandardFederationAPI<F, H>
 where
     F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
