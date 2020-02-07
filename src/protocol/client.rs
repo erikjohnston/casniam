@@ -1,12 +1,36 @@
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use hyper;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
+
+use std::fmt::Display;
 
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
 use crate::protocol::RoomVersion;
+
+fn enc<'a>(s: &'a str) -> impl Display + 'a {
+    utf8_percent_encode(s, NON_ALPHANUMERIC)
+}
+
+#[derive(Clone)]
+pub struct FederationClient {
+    client: hyper::Client<MatrixConnector>,
+    server_name: String,
+    key_name: String,
+    secret_key: sodiumoxide::crypto::sign::SecretKey,
+}
+
+impl FederationClient {
+    pub async fn make_join(&self, room_id: &str, user_id: &str) {
+        let path = format!(
+            "/_matrix/federation/v1/make_join/{}/{}",
+            enc(room_id),
+            enc(user_id)
+        );
+    }
+}
 
 pub trait TransactionSender {
     /// Queues up an event to be sent to the given destination. Future resolves
