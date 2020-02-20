@@ -24,7 +24,7 @@ pub struct FederationClient {
 
 impl FederationClient {
     pub async fn make_join(&self, room_id: &str, user_id: &str) {
-        let path = format!(
+        let _path = format!(
             "/_matrix/federation/v1/make_join/{}/{}",
             enc(room_id),
             enc(user_id)
