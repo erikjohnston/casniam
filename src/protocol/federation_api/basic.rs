@@ -223,7 +223,7 @@ where
                         self.handle_incoming_events::<RoomVersion4>(events)
                             .await?
                     }
-                    r => error!("Unrecognized room version: {}", r),
+                    r => info!("Unrecognized room version: {}", r),
                 }
             }
 
