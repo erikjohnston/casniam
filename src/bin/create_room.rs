@@ -132,8 +132,9 @@ impl Hooks for BasicHooks {
     }
 }
 
-/// Takes a str room version and calls the expression with a type alias `R` set
+/// Takes a `str` room version and calls the expression with a type alias `R` set
 /// to the appopriate type.
+#[macro_export]
 macro_rules! route_room_version {
     ($ver:expr, $f:expr) => {
         match $ver {
