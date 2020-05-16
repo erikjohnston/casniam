@@ -683,7 +683,7 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                         return Err(actix_web::error::ErrorNotFound("Unknown room"))
                     };
 
-                    let response =route_room_version!(
+                    let response = route_room_version!(
                         room_version,
                         {
                             let response = app_data
