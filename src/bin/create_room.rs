@@ -548,30 +548,44 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
 
-                    let event: <RoomVersion4 as RoomVersion>::Event =
-                        serde_json::from_value(body.0)?;
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version = if let Some(room_version) = room_version_opt {
+                        room_version
+                    } else {
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                    };
 
-                    let event_origin = event
-                        .sender()
-                        .splitn(2, ':')
-                        .last()
-                        .unwrap()
-                        .to_string();
+                    let response = route_room_version!(
+                        room_version,
+                        {
+                            let event: <R as RoomVersion>::Event =
+                                serde_json::from_value(body.0)?;
 
-                    app_data.federation_sender
-                        .send_event::<RoomVersion4>(event_origin.clone(), event.clone())
-                        .await
-                        .unwrap();
+                            let event_origin = event
+                                .sender()
+                                .splitn(2, ':')
+                                .last()
+                                .unwrap()
+                                .to_string();
 
-                    let response = app_data
-                        .federation_api
-                        .on_send_join::<RoomVersion4>(room_id.clone(), event)
-                        .await
-                        .unwrap(); // FIXME
+                            app_data.federation_sender
+                                .send_event::<R>(event_origin.clone(), event.clone())
+                                .await
+                                .unwrap();
 
-                    tokio::spawn(async move{
-                        app_data.send_some_events::<RoomVersion4>(room_id, event_origin).await.ok();
-                    });
+                            let response = app_data
+                                .federation_api
+                                .on_send_join::<R>(room_id.clone(), event)
+                                .await
+                                .unwrap(); // FIXME
+
+                            tokio::spawn(async move{
+                                app_data.send_some_events::<R>(room_id, event_origin).await.ok();
+                            });
+
+                            serde_json::to_value(response).unwrap()
+                        }
+                    );
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
@@ -661,11 +675,25 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                         }
                     }
 
-                    let response = app_data
-                        .federation_api
-                        .on_backfill::<RoomVersion4>(room_id, event_ids, limit)
-                        .await
-                        .unwrap(); // FIXME
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version = if let Some(room_version) = room_version_opt {
+                        room_version
+                    } else {
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                    };
+
+                    let response =route_room_version!(
+                        room_version,
+                        {
+                            let response = app_data
+                                .federation_api
+                                .on_backfill::<R>(room_id, event_ids, limit)
+                                .await
+                                .unwrap(); // FIXME
+
+                            serde_json::to_value(response).unwrap()
+                        }
+                    );
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
