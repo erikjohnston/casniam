@@ -132,6 +132,29 @@ impl Hooks for BasicHooks {
     }
 }
 
+/// Takes a str room version and calls the expression with a type alias `R` set
+/// to the appopriate type.
+macro_rules! route_room_version {
+    ($ver:expr, $f:expr) => {
+        match $ver {
+            RoomVersion3::VERSION => {
+                type R = RoomVersion3;
+                $f
+            }
+            RoomVersion4::VERSION => {
+                type R = RoomVersion4;
+                $f
+            }
+            _ => {
+                error!("Unrecognized version {}", $ver);
+                return Err(actix_web::error::ErrorInternalServerError(
+                    "Unknown version",
+                ));
+            }
+        }
+    };
+}
+
 #[derive(Clone)]
 struct AppData {
     server_name: String,
@@ -495,23 +518,16 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
 
                     // TODO: Check if remote server supports room version via ?ver= params
 
-                    let response = match room_version {
-                        RoomVersion4::VERSION => serde_json::to_value(app_data
+                    let response = route_room_version!(
+                        room_version,
+                        serde_json::to_value(
+                            app_data
                             .federation_api
-                            .on_make_join::<RoomVersion4>(room_id, user_id)
+                            .on_make_join::<R>(room_id, user_id)
                             .await
-                            .unwrap()).unwrap(), // FIXME
-                        RoomVersion3::VERSION => serde_json::to_value(app_data
-                            .federation_api
-                            .on_make_join::<RoomVersion3>(room_id, user_id)
-                            .await
-                            .unwrap()).unwrap(), // FIXME
-                        _ => {
-                            error!("Unrecognized version {}", room_version);
-                            return Err(actix_web::error::ErrorInternalServerError("Unknown version"))
-                        }
-                    };
-
+                            .unwrap()
+                        ).unwrap() // FIXME
+                    );
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
