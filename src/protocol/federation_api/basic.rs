@@ -1,5 +1,5 @@
 use futures_util::future::FutureExt;
-use log::{error, info};
+use log::info;
 use serde_json::{json, Value};
 use sodiumoxide::crypto::sign::SecretKey;
 

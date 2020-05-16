@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use log::info;
+use log::{error, info};
 use percent_encoding::percent_decode_str;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -26,7 +26,7 @@ use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
 use casniam::protocol::{
     DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
-    RoomVersion4,
+    RoomVersion3, RoomVersion4,
 };
 use casniam::state_map::StateMap;
 use casniam::stores::{memory, EventStore, RoomStore, StoreFactory};
@@ -486,11 +486,32 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
                     let user_id =
                         percent_decode_str(&path.1).decode_utf8()?.into_owned();
 
-                    let response = app_data
-                        .federation_api
-                        .on_make_join::<RoomVersion4>(room_id, user_id)
-                        .await
-                        .unwrap(); // FIXME
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version = if let Some(room_version) = room_version_opt {
+                        room_version
+                    } else {
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                    };
+
+                    // TODO: Check if remote server supports room version via ?ver= params
+
+                    let response = match room_version {
+                        RoomVersion4::VERSION => serde_json::to_value(app_data
+                            .federation_api
+                            .on_make_join::<RoomVersion4>(room_id, user_id)
+                            .await
+                            .unwrap()).unwrap(), // FIXME
+                        RoomVersion3::VERSION => serde_json::to_value(app_data
+                            .federation_api
+                            .on_make_join::<RoomVersion3>(room_id, user_id)
+                            .await
+                            .unwrap()).unwrap(), // FIXME
+                        _ => {
+                            error!("Unrecognized version {}", room_version);
+                            return Err(actix_web::error::ErrorInternalServerError("Unknown version"))
+                        }
+                    };
+
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
