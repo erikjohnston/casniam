@@ -87,6 +87,7 @@ pub trait RoomStateResolver {
 pub trait RoomState:
     IntoIterator<Item = ((String, String), String)>
     + FromIterator<((String, String), String)>
+    + Default
     + Clone
     + Debug
     + Send

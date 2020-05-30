@@ -10,6 +10,7 @@ use crate::protocol::{Event, RoomState, RoomVersion};
 
 pub mod backed;
 pub mod memory;
+pub mod postgres;
 
 // Ideally this trait would have lots of generic parameters so that we don't
 // need to do lots of clones and stuff. Alas, we need this to be object safe
@@ -31,6 +32,7 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
         self.insert_events(vec![(event, state)])
     }
 
+    /// Return list of events we have not persisted.
     fn missing_events(
         &self,
         event_ids: &[&str],
