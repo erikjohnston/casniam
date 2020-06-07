@@ -3,7 +3,7 @@ use crate::json::signed::Signed;
 use crate::protocol::json::serialize_canonically_remove_fields;
 use crate::protocol::{AuthRules, Event, RoomState, RoomVersion};
 
-use base64;
+
 use failure::Error;
 
 use futures::{Future, FutureExt};
@@ -371,7 +371,7 @@ mod tests {
     use super::*;
     use crate::protocol::json::serialize_canonically_remove_fields;
 
-    use base64;
+    
     use sha2::{Digest, Sha256};
 
     #[test]

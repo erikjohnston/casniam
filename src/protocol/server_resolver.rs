@@ -2,7 +2,7 @@ use failure::Error;
 use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use http::Uri;
-use hyper;
+
 use hyper::client::connect::Connection;
 use hyper::client::connect::HttpConnector;
 use hyper::service::Service;
@@ -14,7 +14,7 @@ use native_tls::TlsConnector;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_tls::TlsConnector as AsyncTlsConnector;
-use trust_dns_resolver;
+
 
 use std::collections::BTreeMap;
 use std::future::Future;

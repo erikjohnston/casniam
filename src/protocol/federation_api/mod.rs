@@ -1,7 +1,7 @@
 use failure::Error;
 use futures::future::BoxFuture;
 use serde::Serialize;
-use serde_json;
+
 
 use crate::protocol::RoomVersion;
 

@@ -11,7 +11,7 @@ use bb8_postgres::PostgresConnectionManager;
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use serde_json;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use std::sync::Arc;
