@@ -1,5 +1,8 @@
-use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
-use crate::stores::EventStore;
+use crate::protocol::{
+    Event, RoomState, RoomStateResolver, RoomVersion, RoomVersion3,
+    RoomVersion4,
+};
+use crate::stores::{EventStore, RoomStore, RoomVersionStore};
 
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::tokio_postgres::NoTls;
@@ -8,7 +11,7 @@ use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use serde_json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type PgPool = Pool<PostgresConnectionManager<NoTls>>;
 
@@ -155,6 +158,139 @@ where
             let state = R::State::resolve_state(states, self).await?;
 
             Ok(Some(state))
+        }
+        .boxed()
+    }
+}
+
+impl<E> RoomStore<E> for PostgresEventStore
+where
+    E: Event + 'static,
+{
+    fn insert_new_events(
+        &self,
+        events: Vec<E>,
+    ) -> BoxFuture<Result<(), Error>> {
+        async move {
+            let mut connection: PooledConnection<
+                PostgresConnectionManager<NoTls>,
+            > = self.pool.get().await?;
+
+            let txn = connection.transaction().await?;
+
+            let mut room_to_events: BTreeMap<String, Vec<E>> = BTreeMap::new();
+            for event in events {
+                room_to_events.entry(event.room_id().to_string()).or_default().push(event);
+            }
+
+            for (room_id, events) in room_to_events {
+                let rows = txn
+                    .query(
+                        "SELECT event_id FROM event_forward_extremities WHERE room_id = $1",
+                        &[&room_id],
+                    )
+                    .await?;
+
+                let mut existing_extremities: BTreeSet<String> =
+                    rows.into_iter().map(|row| row.get(0)).collect();
+
+                for event in &events {
+                    existing_extremities.insert(event.event_id().to_string());
+                }
+
+                for event in &events {
+                    for event_id in event.prev_event_ids() {
+                        existing_extremities.remove(event_id);
+                    }
+                }
+
+                // TODO: Deal with A -> B -> C
+
+                txn.execute(
+                    "DELETE FROM event_forward_extremities WHERE room_id = $1",
+                    &[],
+                ).await?;
+
+                txn.execute(
+                    "INSERT INTO event_forward_extremities (room_id, event_id) SELECT $1, x FROM unnest($2) x",
+                    &[&room_id, &existing_extremities.into_iter().collect::<Vec<_>>()],
+                ).await?;
+            }
+
+            txn.commit().await?;
+
+            Ok(())
+        }.boxed()
+    }
+
+    fn get_forward_extremities(
+        &self,
+        room_id: String,
+    ) -> BoxFuture<Result<BTreeSet<String>, Error>> {
+        async move {
+            let connection: PooledConnection<PostgresConnectionManager<NoTls>> =
+                self.pool.get().await?;
+
+            let rows = connection
+                .query(
+                    "SELECT event_id FROM event_forward_extremities WHERE room_id = $1",
+                    &[&room_id],
+                )
+                .await?;
+
+            Ok(rows.into_iter().map(|row| row.get::<_, String>(0)).collect())
+        }
+        .boxed()
+    }
+}
+
+impl RoomVersionStore for PostgresEventStore {
+    fn get_room_version(
+        &self,
+        room_id: &str,
+    ) -> BoxFuture<Result<Option<&'static str>, Error>> {
+        let room_id = room_id.to_string();
+
+        async move {
+            let connection: PooledConnection<PostgresConnectionManager<NoTls>> =
+                self.pool.get().await?;
+
+            let rows = connection
+                .query(
+                    "SELECT version FROM room_versions WHERE room_id = $1",
+                    &[&room_id],
+                )
+                .await?;
+
+            if let Some(row) = rows.into_iter().next() {
+                match row.get(0) {
+                    RoomVersion3::VERSION => Ok(Some(RoomVersion3::VERSION)),
+                    RoomVersion4::VERSION => Ok(Some(RoomVersion4::VERSION)),
+                    version => bail!("Unrecognized room version {}", version),
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        .boxed()
+    }
+
+    fn set_room_version(
+        &self,
+        room_id: &str,
+        version: &'static str,
+    ) -> BoxFuture<Result<(), Error>> {
+        let room_id = room_id.to_string();
+        async move {
+            let connection: PooledConnection<PostgresConnectionManager<NoTls>> =
+                self.pool.get().await?;
+
+            connection.execute(
+                "INSERT INTO room_versions (room_id, version) VALUES ($1, $2)",
+                &[&room_id, &version]
+            ).await?;
+
+            Ok(())
         }
         .boxed()
     }
