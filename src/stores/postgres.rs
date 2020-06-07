@@ -2,7 +2,8 @@ use crate::protocol::{
     Event, RoomState, RoomStateResolver, RoomVersion, RoomVersion3,
     RoomVersion4,
 };
-use crate::stores::{EventStore, RoomStore, RoomVersionStore};
+use crate::state_map::StateMap;
+use crate::stores::{EventStore, RoomStore, RoomVersionStore, StoreFactory};
 
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::tokio_postgres::NoTls;
@@ -13,11 +14,19 @@ use futures::FutureExt;
 use serde_json;
 use std::collections::{BTreeMap, BTreeSet};
 
+use std::sync::Arc;
+
 type PgPool = Pool<PostgresConnectionManager<NoTls>>;
 
 #[derive(Debug, Clone)]
 pub struct PostgresEventStore {
     pool: PgPool,
+}
+
+impl PostgresEventStore {
+    pub fn new(pool: PgPool) -> PostgresEventStore {
+        PostgresEventStore { pool }
+    }
 }
 
 impl<R, S> EventStore<R, S> for PostgresEventStore
@@ -42,14 +51,14 @@ where
             for (event, state) in events {
                 txn.execute(
                     r#"INSERT INTO events (event_id, json) VALUES ($1, $2)"#,
-                    &[&event.event_id(), &serde_json::to_vec(&event)?],
+                    &[&event.event_id(), &serde_json::to_string(&event)?],
                 )
                 .await?;
 
                 // TODO: Persist state separately.
                 for ((typ, state_key), event_id) in state.into_iter() {
                     txn.execute(
-                        r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $, $3, $4)"#,
+                        r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
                         &[&event.event_id(), &typ, &state_key, &event_id],
                     )
                     .await?;
@@ -208,11 +217,11 @@ where
 
                 txn.execute(
                     "DELETE FROM event_forward_extremities WHERE room_id = $1",
-                    &[],
+                    &[&room_id],
                 ).await?;
 
                 txn.execute(
-                    "INSERT INTO event_forward_extremities (room_id, event_id) SELECT $1, x FROM unnest($2) x",
+                    "INSERT INTO event_forward_extremities (room_id, event_id) SELECT $1, x FROM unnest($2::text[]) x",
                     &[&room_id, &existing_extremities.into_iter().collect::<Vec<_>>()],
                 ).await?;
             }
@@ -263,6 +272,7 @@ impl RoomVersionStore for PostgresEventStore {
                 .await?;
 
             if let Some(row) = rows.into_iter().next() {
+                // TODO: Factor this out
                 match row.get(0) {
                     RoomVersion3::VERSION => Ok(Some(RoomVersion3::VERSION)),
                     RoomVersion4::VERSION => Ok(Some(RoomVersion4::VERSION)),
@@ -293,5 +303,21 @@ impl RoomVersionStore for PostgresEventStore {
             Ok(())
         }
         .boxed()
+    }
+}
+
+impl StoreFactory<StateMap<String>> for PostgresEventStore {
+    fn get_event_store<R: RoomVersion>(
+        &self,
+    ) -> Arc<dyn EventStore<R, StateMap<String>>> {
+        Arc::new(self.clone())
+    }
+
+    fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>> {
+        Arc::new(self.clone())
+    }
+
+    fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore> {
+        Arc::new(self.clone())
     }
 }

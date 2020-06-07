@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use failure::Error;
 use futures::future::BoxFuture;
@@ -29,7 +30,7 @@ use casniam::protocol::{
     RoomVersion3, RoomVersion4,
 };
 use casniam::state_map::StateMap;
-use casniam::stores::{memory, EventStore, RoomStore, StoreFactory};
+use casniam::stores::{postgres, EventStore, RoomStore, StoreFactory};
 
 #[derive(Serialize, Deserialize)]
 struct RoomAliasQuery {
@@ -49,7 +50,7 @@ struct BasicHooks {
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    stores: memory::MemoryStoreFactory,
+    stores: postgres::PostgresEventStore,
     federation_sender: MemoryTransactionSender,
 }
 
@@ -60,8 +61,11 @@ impl Hooks for BasicHooks {
     ) -> BoxFuture<FederationResult<()>> {
         let infos = infos.to_vec();
 
-        let event_store = self.stores.get_event_store::<R>();
-        let room_store = self.stores.get_room_store::<R>();
+        // let event_store = self.stores.get_event_store::<R>();
+        // let room_store = self.stores.get_room_store::<R>();
+
+        let event_store = &self.stores as &dyn EventStore<R, StateMap<String>>;
+        let room_store = &self.stores as &dyn RoomStore<R::Event>;
 
         async move {
             for info in infos {
@@ -83,17 +87,13 @@ impl Hooks for BasicHooks {
                         .unwrap()
                         .to_string();
 
-                    let state = event_store
-                        .get_state_for(
-                            &extrems
-                                .iter()
-                                .map(|e| e as &str)
-                                .collect::<Vec<_>>(),
-                        )
-                        .await?
-                        .unwrap();
+                    let event_ids =
+                        extrems.iter().map(|e| e as &str).collect::<Vec<_>>();
 
-                    let mut event = EventBuilder::from_json(json!({
+                    let state: StateMap<String> =
+                        event_store.get_state_for(&event_ids).await?.unwrap();
+
+                    let mut event: R::Event = EventBuilder::from_json(json!({
                         "room_id": room_id,
                         "sender": creator,
                         "type": "m.room.message",
@@ -103,7 +103,7 @@ impl Hooks for BasicHooks {
                         },
                         "prev_events": extrems,
                     }))?
-                    .build(event_store.as_ref())
+                    .build::<R, StateMap<String>, _>(event_store)
                     .await?;
 
                     event.sign(
@@ -157,24 +157,20 @@ macro_rules! route_room_version {
 }
 
 #[derive(Clone)]
-struct AppData {
+struct AppData<F> {
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    stores: memory::MemoryStoreFactory,
+    stores: F,
     federation_sender: MemoryTransactionSender,
     key_server_servlet: KeyServerServlet,
-    federation_api:
-        StandardFederationAPI<memory::MemoryStoreFactory, BasicHooks>,
+    federation_api: StandardFederationAPI<F, BasicHooks>,
 }
 
-impl AppData {
-    fn get_database<R: RoomVersion>(
-        &self,
-    ) -> memory::MemoryEventStore<R, StateMap<String>> {
-        self.stores.get_memory_store::<R>()
-    }
-
+impl<F> AppData<F>
+where
+    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+{
     async fn send_some_events<R>(
         self,
         room_id: String,
@@ -184,11 +180,12 @@ impl AppData {
         R: RoomVersion,
         R::Event: Serialize,
     {
-        let database = self.get_database::<R>();
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
 
         let creator = format!("@alice:{}", self.server_name);
 
-        let prev_events: Vec<_> = database
+        let prev_events: Vec<_> = room_store
             .get_forward_extremities(room_id.clone())
             .await?
             .into_iter()
@@ -204,7 +201,7 @@ impl AppData {
             },
             "prev_events": prev_events,
         }))?
-        .build(&database)
+        .build(event_store.as_ref())
         .await?;
 
         event.sign(
@@ -213,16 +210,18 @@ impl AppData {
             &self.secret_key,
         );
 
-        let state = database
+        let state = event_store
             .get_state_for(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        database.insert_event(event.clone(), state.clone()).await?;
+        event_store
+            .insert_event(event.clone(), state.clone())
+            .await?;
 
-        database.insert_new_event(event.clone()).await?;
+        room_store.insert_new_event(event.clone()).await?;
 
         info!("Sending 'hello' event to {}", remote);
 
@@ -244,7 +243,7 @@ impl AppData {
             },
             "prev_events": prev_events,
         }))?
-        .build(&database)
+        .build(event_store.as_ref())
         .await?;
 
         event.sign(
@@ -253,16 +252,18 @@ impl AppData {
             &self.secret_key,
         );
 
-        let state = database
+        let state = event_store
             .get_state_for(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        database.insert_event(event.clone(), state.clone()).await?;
+        event_store
+            .insert_event(event.clone(), state.clone())
+            .await?;
 
-        database.insert_new_event(event.clone()).await?;
+        room_store.insert_new_event(event.clone()).await?;
 
         info!("Sending 'leave' event to {}", remote);
 
@@ -282,22 +283,23 @@ impl AppData {
         room_id: String,
         builders: B,
     ) -> Result<DagChunkFragment<R::Event>, Error> {
-        let database = self.get_database::<R>();
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
 
         let mut chunk = DagChunkFragment::new();
-        let mut prev_event_ids: Vec<_> = database
+        let mut prev_event_ids: Vec<_> = room_store
             .get_forward_extremities(room_id)
             .await?
             .into_iter()
             .collect();
 
-        let mut prev_events = database
+        let mut prev_events = event_store
             .get_events(
                 &prev_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?;
 
-        let mut state = database
+        let mut state = event_store
             .get_state_for(
                 &prev_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
@@ -346,7 +348,8 @@ impl AppData {
         R: RoomVersion,
         R::Event: Serialize,
     {
-        let database = self.get_database::<R>();
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
 
         let handler = Handler::new(self.stores.clone());
         let stuff = handler.handle_chunk::<R>(chunk).await?;
@@ -355,15 +358,17 @@ impl AppData {
             assert!(!info.rejected);
         }
 
-        database.insert_events(
-            stuff
-                .iter()
-                .map(|info| (info.event.clone(), info.state_before.clone()))
-                .collect(),
-        );
+        event_store
+            .insert_events(
+                stuff
+                    .iter()
+                    .map(|info| (info.event.clone(), info.state_before.clone()))
+                    .collect(),
+            )
+            .await?;
 
         // TODO: Do we need to clone?
-        database
+        room_store
             .insert_new_events(
                 stuff.iter().map(|info| info.event.clone()).collect(),
             )
@@ -473,11 +478,14 @@ impl AppData {
     }
 }
 
-fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
+fn add_routes<F>(cfg: &mut actix_web::web::ServiceConfig)
+where
+    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+{
     cfg.route(
         "/_matrix/key/v2/server",
         actix_web::web::get().to(
-            |app_data: actix_web::web::Data<AppData>| async move {
+            |app_data: actix_web::web::Data<AppData<F>>| async move {
                 let body = app_data.key_server_servlet.make_body();
 
                 Ok(actix_web::web::Json(body)) as actix_web::Result<_>
@@ -487,7 +495,7 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
     .route(
         "/_matrix/key/v2/server/{key}",
         actix_web::web::get().to(
-            |app_data: actix_web::web::Data<AppData>| async move {
+            |app_data: actix_web::web::Data<AppData<F>>| async move {
                 let body = app_data.key_server_servlet.make_body();
 
                 Ok(actix_web::web::Json(body)) as actix_web::Result<_>
@@ -498,11 +506,11 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
         actix_web::web::get().to(
             |(state, path): (
-                actix_web::web::Data<AppData>,
+                actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
             )| {
                 async move {
-                    let app_data: &AppData = &state;
+                    let app_data: &AppData<F> = &state;
 
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
@@ -539,12 +547,12 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         "/_matrix/federation/v2/send_join/{room_id}/{event_id}",
         actix_web::web::put().to(
             |(state, path, body): (
-                actix_web::web::Data<AppData>,
+                actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 actix_web::web::Json<serde_json::Value>,
             )| {
                 async move {
-                    let app_data: AppData = state.as_ref().clone();
+                    let app_data: AppData<F> = state.as_ref().clone();
 
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
@@ -597,12 +605,12 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         "/_matrix/federation/v1/send/{txn_id}",
         actix_web::web::put().to(
             |(state, _path, body): (
-                actix_web::web::Data<AppData>,
+                actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String,)>,
                 actix_web::web::Json<serde_json::Value>,
             )| {
                 async move {
-                    let app_data: &AppData = &state;
+                    let app_data: &AppData<F> = &state;
 
                     let transaction: TransactionRequest =
                         serde_json::from_value(body.0)?;
@@ -622,11 +630,11 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         "/_matrix/federation/v1/query/directory",
         actix_web::web::get().to(
             |(state, query): (
-                actix_web::web::Data<AppData>,
+                actix_web::web::Data<AppData<F>>,
                 actix_web::web::Query<RoomAliasQuery>,
             )| {
                 async move {
-                    let app_data: &AppData = &state;
+                    let app_data: &AppData<F> = &state;
 
                     let room_id = format!(
                         "!{}:{}",
@@ -653,12 +661,12 @@ fn add_routes(cfg: &mut actix_web::web::ServiceConfig) {
         "/_matrix/federation/v1/backfill/{room_id}",
         actix_web::web::get().to(
             |(state, path, query): (
-                actix_web::web::Data<AppData>,
+                actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String,)>,
                 actix_web::web::Query<Vec<(String, String)>>,
             )| {
                 async move {
-                    let app_data: &AppData = &state;
+                    let app_data: &AppData<F> = &state;
                     let room_id = path.0.clone();
 
                     let mut event_ids = Vec::new();
@@ -728,7 +736,27 @@ async fn main() -> std::io::Result<()> {
         BTreeMap::new(),
     );
 
-    let stores = memory::MemoryStoreFactory::new();
+    // let stores = memory::MemoryStoreFactory::new();
+
+    let config = tokio_postgres::config::Config::from_str(
+        "host=/var/run/postgresql user=erikj dbname=casniam",
+    )
+    .unwrap();
+    let pg_mgr = bb8_postgres::PostgresConnectionManager::new(
+        config,
+        tokio_postgres::NoTls,
+    );
+
+    let pool = match bb8::Pool::builder()
+        .min_idle(Some(1))
+        .max_size(10)
+        .build(pg_mgr)
+        .await
+    {
+        Ok(pool) => pool,
+        Err(e) => panic!("builder error: {:?}", e),
+    };
+    let stores = postgres::PostgresEventStore::new(pool);
 
     let resolver = MatrixResolver::new().await.unwrap();
 
@@ -775,7 +803,7 @@ async fn main() -> std::io::Result<()> {
             .data(app_data.clone())
             .app_data(app_data.clone())
             .wrap(actix_web::middleware::Logger::default())
-            .configure(add_routes)
+            .configure(add_routes::<postgres::PostgresEventStore>)
     })
     .bind("127.0.0.1:9998")
     .unwrap();

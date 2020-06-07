@@ -499,10 +499,10 @@ where
 
 impl<E> IntoIterator for StateMap<E>
 where
-    E: Debug + Clone + 'static,
+    E: Debug + Send + Clone + 'static,
 {
     type Item = ((String, String), E);
-    type IntoIter = Box<dyn Iterator<Item = Self::Item>>;
+    type IntoIter = Box<dyn Iterator<Item = Self::Item> + Send>;
 
     fn into_iter(self) -> Self::IntoIter {
         let StateMap {
