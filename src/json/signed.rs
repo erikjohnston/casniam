@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use sodiumoxide::crypto::sign::{sign_detached, SecretKey, Signature};
 
-
 use serde::de::{Deserialize, DeserializeOwned, Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::Serialize;
@@ -193,8 +192,6 @@ impl<'de> serde::Deserialize<'de> for Base64Signature {
 mod tests {
     use super::*;
     use sodiumoxide::crypto::sign;
-
-    
 
     #[test]
     fn base64_serialize() {

@@ -2,7 +2,6 @@ use failure::Error;
 use futures::future::BoxFuture;
 use serde::Serialize;
 
-
 use crate::protocol::RoomVersion;
 
 pub mod basic;

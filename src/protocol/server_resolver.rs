@@ -15,7 +15,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_tls::TlsConnector as AsyncTlsConnector;
 
-
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::IpAddr;
