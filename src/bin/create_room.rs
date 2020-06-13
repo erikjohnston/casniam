@@ -30,7 +30,7 @@ use casniam::protocol::{
     RoomVersion3, RoomVersion4,
 };
 use casniam::state_map::StateMap;
-use casniam::stores::{postgres, EventStore, RoomStore, StoreFactory};
+use casniam::stores::{postgres, StoreFactory};
 
 #[derive(Serialize, Deserialize)]
 struct RoomAliasQuery {
@@ -46,26 +46,26 @@ where
 }
 
 #[derive(Clone)]
-struct BasicHooks {
+struct BasicHooks<F> {
     server_name: String,
     key_id: String,
     secret_key: sign::SecretKey,
-    stores: postgres::PostgresEventStore,
+    stores: F,
     federation_sender: MemoryTransactionSender,
 }
 
-impl Hooks for BasicHooks {
+impl<F> Hooks for BasicHooks<F>
+where
+    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+{
     fn on_new_events<R: RoomVersion>(
         &self,
         infos: &[PersistEventInfo<R, StateMap<String>>],
     ) -> BoxFuture<FederationResult<()>> {
         let infos = infos.to_vec();
 
-        // let event_store = self.stores.get_event_store::<R>();
-        // let room_store = self.stores.get_room_store::<R>();
-
-        let event_store = &self.stores as &dyn EventStore<R, StateMap<String>>;
-        let room_store = &self.stores as &dyn RoomStore<R::Event>;
+        let event_store = self.stores.get_event_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
 
         async move {
             for info in infos {
@@ -103,7 +103,7 @@ impl Hooks for BasicHooks {
                         },
                         "prev_events": extrems,
                     }))?
-                    .build::<R, StateMap<String>, _>(event_store)
+                    .build::<R, StateMap<String>, _>(event_store.as_ref())
                     .await?;
 
                     event.sign(
@@ -164,7 +164,7 @@ struct AppData<F> {
     stores: F,
     federation_sender: MemoryTransactionSender,
     key_server_servlet: KeyServerServlet,
-    federation_api: StandardFederationAPI<F, BasicHooks>,
+    federation_api: StandardFederationAPI<F, BasicHooks<F>>,
 }
 
 impl<F> AppData<F>
