@@ -5,38 +5,38 @@ name = "casniam"
 version = "0.1.0"
 
 [dependencies]
-base64 = "0.11.0"
-chrono = "0.4.10"
-failure = "0.1.6"
-petgraph = "0.5.0"
+base64 = "0.12.1"
+chrono = "0.4.11"
+failure = "0.1.8"
+petgraph = "0.5.1"
 rand = "0.7.3"
-sha2 = "0.8.1"
-smallvec = "1.2.0"
+sha2 = "0.9.0"
+smallvec = "1.4.0"
 sodiumoxide = "0.2.5"
 anymap = "0.12.1"
-openssl = "0.10.27"
+openssl = "0.10.29"
 env_logger = "0.7.1"
 log = "0.4.8"
 #serde_urlencoded = "0.6.1"
-tokio-timer = "0.2.12"
-trust-dns-resolver = "0.19.2"
-http = "0.2.0"
-tokio-tls = "0.3.0"
-hyper = "0.13.2"
+tokio-timer = "0.2.13"
+trust-dns-resolver = "0.19.5"
+http = "0.2.1"
+tokio-tls = "0.3.1"
+hyper = "0.13.6"
 hyper-tls = "0.4.1"
-native-tls = "0.2.3"
-futures-util = "0.3.1"
+native-tls = "0.2.4"
+futures-util = "0.3.5"
 bytes = "0.5.4"
 percent-encoding = "2.1.0"
-serde_derive = "1.0.104"
+serde_derive = "1.0.111"
 actix-web = "2.0.0"
-actix-rt = "1.0.0"
+actix-rt = "1.1.1"
 bb8 = "0.4.2"
 bb8-postgres = "0.4.0"
 tokio-postgres = "0.5.4"
 
 [dependencies.tokio]
-version = "0.2.11"
+version = "0.2.21"
 features = ["net", "rt-threaded", "macros", "rt-util"]
 
 
@@ -45,16 +45,16 @@ git = "https://github.com/NegativeMjark/indolentjson-rust.git"
 
 [dependencies.serde_json]
 features = ["raw_value"]
-version = "1.0.45"
+version = "1.0.55"
 
 [dependencies.serde]
-version = "1.0.104"
+version = "1.0.111"
 features = ["derive"]
 
 
 [dependencies.futures]
 package = "futures"
-version = "0.3.1"
+version = "0.3.5"
 features = ["compat"]
 
 

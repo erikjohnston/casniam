@@ -95,7 +95,7 @@ where
 
             Ok(event_ids
                 .into_iter()
-                .filter(|event_id| found.contains(event_id))
+                .filter(|event_id| !found.contains(event_id))
                 .collect())
         }
         .boxed()
@@ -121,8 +121,8 @@ where
 
             let mut events = Vec::with_capacity(event_ids.len());
             for row in rows {
-                let row: Vec<u8> = row.get(0);
-                let event: R::Event = serde_json::from_slice(&row).unwrap();
+                let row: String = row.get(0);
+                let event: R::Event = serde_json::from_str(&row).unwrap();
                 events.push(event);
             }
 
