@@ -50,7 +50,7 @@ where
             // TODO: Pipeline these queries.
             for (event, state) in events {
                 txn.execute(
-                    r#"INSERT INTO events (room_id, event_id, json) VALUES ($1, $2)"#,
+                    r#"INSERT INTO events (room_id, event_id, json) VALUES ($1, $2, $3)"#,
                     &[&event.room_id(), &event.event_id(), &serde_json::to_string(&event)?],
                 )
                 .await?;

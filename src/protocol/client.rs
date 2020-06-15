@@ -3,6 +3,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
+use serde_json::json;
 
 use std::fmt::Display;
 
@@ -23,12 +24,84 @@ pub struct FederationClient {
 }
 
 impl FederationClient {
-    pub async fn make_join(&self, room_id: &str, user_id: &str) {
-        let _path = format!(
-            "/_matrix/federation/v1/make_join/{}/{}",
+    pub async fn get_missing_events<R: RoomVersion>(
+        &self,
+        destination: &str,
+        room_id: &str,
+        earliest_events: &[&str],
+        latest_events: &[&str],
+    ) -> Result<Vec<R::Event>, Error> {
+        let path = format!(
+            "/_matrix/federation/v1/get_missing_events/{}",
             enc(room_id),
-            enc(user_id)
         );
+
+        // TODO: Fill out min_depth
+        let content = &json!({
+            "limit": 10,
+            "min_depth": 0,
+            "earliest_evnets": earliest_events,
+            "latest_events": latest_events,
+        });
+
+        let auth_header =
+            self.make_auth_header("POST", &path, destination, Some(&content));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&content)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!(
+                "Got {} response code for /get_missing_events",
+                response.status()
+            );
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp: GetMissingEventsResponse<R::Event> =
+            serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp.events)
+    }
+
+    fn make_auth_header<T: serde::Serialize>(
+        &self,
+        method: &'static str,
+        path: &str,
+        destination: &str,
+        content: Option<T>,
+    ) -> String {
+        let request_json = RequestJson {
+            method: method,
+            uri: path.clone(),
+            origin: &self.server_name,
+            destination: destination.clone(),
+            content: content,
+        };
+
+        let signed: Signed<_> = Signed::wrap(request_json).unwrap();
+        let sig = signed.sign_detached(&self.secret_key);
+        let b64_sig = base64::encode_config(&sig, base64::STANDARD_NO_PAD);
+
+        format!(
+            r#"X-Matrix origin={},key="{}",sig="{}""#,
+            &self.server_name, &self.key_name, b64_sig,
+        )
     }
 }
 
@@ -73,11 +146,11 @@ impl TransactionSender for MemoryTransactionSender {
         });
 
         let request_json = RequestJson {
-            method: "PUT".to_string(),
-            uri: path.clone(),
-            origin: self.server_name.clone(),
-            destination: destination.clone(),
-            content: Some(content.clone()),
+            method: "PUT",
+            uri: &path,
+            origin: &self.server_name,
+            destination: &destination,
+            content: Some(&content),
         };
 
         let signed: Signed<_> = Signed::wrap(request_json).unwrap();
@@ -113,11 +186,16 @@ impl TransactionSender for MemoryTransactionSender {
 }
 
 #[derive(Serialize)]
-struct RequestJson {
-    method: String,
-    uri: String,
-    origin: String,
-    destination: String,
+struct RequestJson<'a, T> {
+    method: &'a str,
+    uri: &'a str,
+    origin: &'a str,
+    destination: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<serde_json::Value>,
+    content: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct GetMissingEventsResponse<E> {
+    events: Vec<E>,
 }
