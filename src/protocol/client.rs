@@ -87,11 +87,11 @@ impl FederationClient {
         content: Option<T>,
     ) -> String {
         let request_json = RequestJson {
-            method: method,
-            uri: path.clone(),
+            method,
+            uri: path,
             origin: &self.server_name,
-            destination: destination.clone(),
-            content: content,
+            destination,
+            content,
         };
 
         let signed: Signed<_> = Signed::wrap(request_json).unwrap();
