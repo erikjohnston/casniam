@@ -157,6 +157,72 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
     }
 }
 
+impl<R, S, E> EventStore<R, S> for Arc<E>
+where
+    E: EventStore<R, S> + ?Sized,
+    R: RoomVersion,
+    S: RoomState,
+{
+    fn insert_events(
+        &self,
+        events: Vec<(R::Event, S)>,
+    ) -> BoxFuture<Result<(), Error>> {
+        self.as_ref().insert_events(events)
+    }
+
+    fn insert_event(
+        &self,
+        event: R::Event,
+        state: S,
+    ) -> BoxFuture<Result<(), Error>> {
+        self.as_ref().insert_event(event, state)
+    }
+
+    /// Return list of events we have not persisted.
+    fn missing_events(
+        &self,
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Vec<String>, Error>> {
+        self.as_ref().missing_events(event_ids)
+    }
+
+    fn get_events(
+        &self,
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
+        self.as_ref().get_events(event_ids)
+    }
+
+    fn get_event(
+        &self,
+        event_id: &str,
+    ) -> BoxFuture<Result<Option<R::Event>, Error>> {
+        self.as_ref().get_event(event_id)
+    }
+
+    fn get_state_for(
+        &self,
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Option<S>, Error>> {
+        self.as_ref().get_state_for(event_ids)
+    }
+
+    fn get_conflicted_auth_chain(
+        &self,
+        event_ids: Vec<Vec<String>>,
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
+        self.as_ref().get_conflicted_auth_chain(event_ids)
+    }
+
+    fn get_backfill(
+        &self,
+        event_ids: Vec<String>,
+        limit: usize,
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
+        self.as_ref().get_backfill(event_ids, limit)
+    }
+}
+
 pub trait RoomStore<E: Event>: Send + Sync {
     /// Insert non-rejected events that should be used for calculating forward
     /// extremities.

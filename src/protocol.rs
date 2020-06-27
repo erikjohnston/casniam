@@ -60,6 +60,7 @@ pub trait Event:
 pub trait DagNode {
     fn id(&self) -> &str;
     fn prevs(&self) -> Vec<&str>;
+    fn auth_prev(&self) -> Vec<&str>;
 }
 
 impl<E> DagNode for E
@@ -72,6 +73,10 @@ where
 
     fn prevs(&self) -> Vec<&str> {
         self.prev_event_ids()
+    }
+
+    fn auth_prev(&self) -> Vec<&str> {
+        self.auth_event_ids()
     }
 }
 
@@ -183,17 +188,186 @@ pub trait FederationTransactionQueue {
     ) -> BoxFuture<()>;
 }
 
-pub struct Handler<S: RoomState, F: StoreFactory<S>> {
+#[derive(Clone)]
+pub struct Handler<S: RoomState, F> {
     stores: F,
+    client: Option<client::HyperFederationClient>,
     _data: PhantomData<S>, // client: Box<FederationClient>,
 }
 
 impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
-    pub fn new(stores: F) -> Self {
+    pub fn new(stores: F, client: client::HyperFederationClient) -> Self {
         Handler {
             stores,
+            client: Some(client),
             _data: PhantomData,
         }
+    }
+
+    pub fn no_http(stores: F) -> Self {
+        Handler {
+            stores,
+            client: None,
+            _data: PhantomData,
+        }
+    }
+
+    pub async fn check_for_missing<R: RoomVersion>(
+        &self,
+        origin: &str,
+        chunk: DagChunkFragment<R::Event>,
+    ) -> Result<DagChunkFragment<R::Event>, Error> {
+        let stores = self.stores.clone();
+        let event_store = stores.get_event_store::<R>();
+
+        if chunk.backward_extremities().is_empty() {
+            return Ok(chunk);
+        }
+
+        let unknown_events = event_store
+            .missing_events(
+                &chunk
+                    .backward_extremities()
+                    .iter()
+                    .map(|e| e as &str)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+
+        if unknown_events.is_empty() {
+            return Ok(chunk);
+        }
+
+        info!("Unknown events: {:?}", unknown_events);
+
+        let room = chunk.events[0].room_id().to_string();
+
+        let client = self.client.as_ref().ok_or(format_err!("No http mode"))?;
+
+        // TODO: Need to know origin and current forward extremities
+        let room_store = stores.get_room_store::<R>();
+
+        let set = room_store.get_forward_extremities(room.to_string()).await?;
+
+        let current_extremities: Vec<_> =
+            set.iter().map(|s| s as &str).collect();
+
+        let new_extremities: Vec<&str> = chunk
+            .forward_extremities()
+            .iter()
+            .map(|s| s as &str)
+            .collect();
+
+        let mut missing_events = client
+            .get_missing_events::<R>(
+                origin,
+                &room,
+                &current_extremities,
+                &new_extremities,
+            )
+            .await?;
+
+        topological_sort(&mut missing_events);
+
+        let mut new_event_list = chunk.events;
+        new_event_list.append(&mut missing_events);
+
+        let dag_chunks = DagChunkFragment::from_events(new_event_list);
+
+        for dag_chunk in &dag_chunks {
+            let unknown_events = event_store
+                .missing_events(
+                    &dag_chunk
+                        .backward_extremities()
+                        .iter()
+                        .map(|e| e as &str)
+                        .collect::<Vec<_>>(),
+                )
+                .await?;
+
+            if !unknown_events.is_empty() {
+                let mut map = HashMap::new();
+
+                let mut new_events = Vec::new();
+
+                for event_id in unknown_events {
+                    let state =
+                        client.get_state_ids(origin, &room, &event_id).await?;
+
+                    let state_ids: Vec<&str> = state
+                        .auth_chain_ids
+                        .iter()
+                        .chain(state.pdu_ids.iter())
+                        .map(|e| e as &str)
+                        .collect();
+
+                    let missing_events =
+                        event_store.missing_events(&state_ids).await?;
+
+                    // Fetch missing events.
+                    for event_id in missing_events {
+                        let event = client
+                            .get_event::<R>(origin, &room, &event_id)
+                            .await?;
+
+                        new_events.push(event);
+                    }
+
+                    map.insert(event_id, state);
+                }
+
+                // We sort these so that if there are any dependencies we handle
+                // them in the correct order.
+                topological_sort_by_func(&mut new_events, DagNode::auth_prev);
+
+                for event in &new_events {
+                    let events =
+                        event_store.get_events(&event.auth_event_ids()).await?;
+
+                    let mut state = S::new();
+                    for event in events {
+                        if let Some(state_key) = event.state_key() {
+                            state.add_event(
+                                event.event_type().to_string(),
+                                state_key.to_string(),
+                                event.event_id().to_string(),
+                            );
+                        }
+                    }
+
+                    let rejected = match R::Auth::check(
+                        &event,
+                        &state,
+                        &event_store,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            info!("Allowed {}", event.event_id());
+                            false
+                        }
+                        Err(err) => {
+                            info!(
+                                "Denied event {} because: {}",
+                                event.event_type(),
+                                err
+                            );
+                            true
+                        }
+                    };
+
+                    if !rejected {
+                        // TODO: persist event.
+                    }
+                }
+
+                // TODO: Handle new events
+            }
+        }
+
+        // TODO: Fetch missing events
+        // TODO: Fetch state for gaps
+        unimplemented!();
     }
 
     pub async fn handle_chunk<R: RoomVersion>(
@@ -207,7 +381,8 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         let stores = self.stores.clone();
         let event_store = stores.get_event_store::<R>();
 
-        let missing = get_missing(&chunk.events);
+        // let missing = get_missing(&chunk.events);
+        let missing = &chunk.backward_extremities;
 
         if !missing.is_empty() {
             let unknown_events = event_store
@@ -217,16 +392,13 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .await?;
 
             if !unknown_events.is_empty() {
-                // TODO: Fetch missing events
-                // TODO: Fetch state for gaps
-                info!("Unknown events: {:?}", unknown_events);
-                unimplemented!();
+                bail!("Unknown events: {:?}", unknown_events);
             }
         }
 
         let mut event_to_state_after: HashMap<String, S> = HashMap::new();
 
-        for event_id in &missing {
+        for event_id in missing {
             let state = event_store.get_state_for(&[event_id]).await?;
             event_to_state_after.insert(event_id.to_string(), state.unwrap());
         }
@@ -303,7 +475,7 @@ pub struct PersistEventInfo<R: RoomVersion, S: RoomState> {
 pub struct DagChunkFragment<E> {
     pub event_ids: HashSet<String>,
     pub events: Vec<E>,
-    pub backwards_extremities: HashSet<String>,
+    pub backward_extremities: HashSet<String>,
     pub forward_extremities: HashSet<String>,
 }
 
@@ -315,7 +487,7 @@ where
         DagChunkFragment {
             event_ids: HashSet::new(),
             events: Vec::new(),
-            backwards_extremities: HashSet::new(),
+            backward_extremities: HashSet::new(),
             forward_extremities: HashSet::new(),
         }
     }
@@ -343,7 +515,7 @@ where
 
     pub fn from_event(event: E) -> DagChunkFragment<E> {
         DagChunkFragment {
-            backwards_extremities: event
+            backward_extremities: event
                 .prevs()
                 .iter()
                 .map(|&e| e.to_string())
@@ -365,6 +537,9 @@ where
         {
             for e in &backwards {
                 self.forward_extremities.remove(e);
+                if !self.event_ids.contains(e) {
+                    self.backward_extremities.insert(e.to_string());
+                }
             }
             self.forward_extremities.insert(event.id().to_string());
             self.event_ids.insert(event.id().to_string());
@@ -378,14 +553,34 @@ where
         Err(event)
     }
 
+    /// Get the set of event IDs of the forward extremities.
+    ///
+    /// The event IDs returned are in the chunk.
     pub fn forward_extremities(&self) -> &HashSet<String> {
         &self.forward_extremities
+    }
+
+    /// Get the set of event IDs of the backwards extremities.
+    ///
+    /// The event IDs returned are *not* in the chunk.
+    pub fn backward_extremities(&self) -> &HashSet<String> {
+        &self.backward_extremities
     }
 }
 
 /// Sorts the given vector of events into topological order, with "earliest"
-/// events first.
+/// events first. Returns a list of event IDs referenced but not in the vec.
 fn topological_sort(events: &mut Vec<impl DagNode>) -> HashSet<String> {
+    topological_sort_by_func(events, DagNode::prevs)
+}
+
+/// Sorts the given vector of events into topological order, with "earliest"
+/// events first. Returns a list of event IDs referenced but not in the vec.
+fn topological_sort_by_func<N, F>(events: &mut Vec<N>, f: F) -> HashSet<String>
+where
+    N: DagNode,
+    F: Fn(&N) -> Vec<&str>,
+{
     let (ordering, missing) = {
         let mut graph = petgraph::graphmap::DiGraphMap::new();
         let mut missing: HashSet<String> = HashSet::new();
@@ -394,7 +589,7 @@ fn topological_sort(events: &mut Vec<impl DagNode>) -> HashSet<String> {
             events.iter().map(|e| (e.id().to_string(), e)).collect();
 
         for event in event_map.values() {
-            for &prev_event_id in &event.prevs() {
+            for prev_event_id in f(event) {
                 if event_map.contains_key(prev_event_id as &str) {
                     graph.add_edge(event.id(), prev_event_id, 0);
                 } else {
@@ -414,27 +609,6 @@ fn topological_sort(events: &mut Vec<impl DagNode>) -> HashSet<String> {
     };
 
     events.sort_unstable_by_key(|event| ordering[event.id()]);
-
-    missing
-}
-
-fn get_missing<'a>(
-    events: impl IntoIterator<Item = &'a (impl Event + 'a)>,
-) -> HashSet<String> {
-    let mut missing: HashSet<String> = HashSet::new();
-
-    let event_map: HashMap<_, _> = events
-        .into_iter()
-        .map(|e| (e.event_id().to_string(), e))
-        .collect();
-
-    for event in event_map.values() {
-        for &prev_event_id in &event.prev_event_ids() {
-            if !event_map.contains_key(prev_event_id as &str) {
-                missing.insert(prev_event_id.to_string());
-            }
-        }
-    }
 
     missing
 }
@@ -548,36 +722,16 @@ mod tests {
         let chunks = DagChunkFragment::from_events(events);
 
         assert_eq!(chunks.len(), 1);
-    }
 
-    #[test]
-    fn test_get_missing() {
-        let events = vec![
-            TestEvent {
-                event_id: "B".to_string(),
-                prev_events: vec!["A".to_string()],
-                etype: "type".to_string(),
-                state_key: None,
-            },
-            TestEvent {
-                event_id: "C".to_string(),
-                prev_events: vec!["B".to_string()],
-                etype: "type".to_string(),
-                state_key: None,
-            },
-            TestEvent {
-                event_id: "D".to_string(),
-                prev_events: vec!["C".to_string()],
-                etype: "type".to_string(),
-                state_key: None,
-            },
-        ];
+        assert_eq!(
+            chunks[0].forward_extremities(),
+            &vec!["D".to_string()].into_iter().collect()
+        );
 
-        let missing = get_missing(events.iter());
-
-        let expected_missing: HashSet<String> =
-            vec!["A".to_string()].into_iter().collect();
-        assert_eq!(missing, expected_missing);
+        assert_eq!(
+            chunks[0].backward_extremities(),
+            &vec!["A".to_string()].into_iter().collect()
+        )
     }
 
     #[test]
@@ -723,7 +877,8 @@ mod tests {
 
     #[test]
     fn test_handle() {
-        let handler = Handler::<StateMap<String>, _>::new(DummyStoreFactory);
+        let handler =
+            Handler::<StateMap<String>, _>::no_http(DummyStoreFactory);
 
         let events = vec![
             TestEvent {

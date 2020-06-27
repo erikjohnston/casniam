@@ -9,21 +9,88 @@ use std::fmt::Display;
 
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
-use crate::protocol::RoomVersion;
+use crate::protocol::{Event, RoomVersion};
 
 fn enc<'a>(s: &'a str) -> impl Display + 'a {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
 }
 
 #[derive(Clone)]
-pub struct FederationClient {
+pub struct HyperFederationClient {
     client: hyper::Client<MatrixConnector>,
     server_name: String,
     key_name: String,
     secret_key: sodiumoxide::crypto::sign::SecretKey,
 }
 
-impl FederationClient {
+impl HyperFederationClient {
+    pub fn new(
+        client: hyper::Client<MatrixConnector>,
+        server_name: String,
+        key_name: String,
+        secret_key: sodiumoxide::crypto::sign::SecretKey,
+    ) -> HyperFederationClient {
+        HyperFederationClient {
+            client,
+            server_name,
+            key_name,
+            secret_key,
+        }
+    }
+
+    pub async fn get_event<R: RoomVersion>(
+        &self,
+        destination: &str,
+        _room_id: &str,
+        event_id: &str,
+    ) -> Result<R::Event, Error> {
+        let path = format!("/_matrix/federation/v1/event/{}", enc(event_id),);
+
+        let auth_header =
+            self.make_auth_header::<()>("GET", &path, destination, None);
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(hyper::Body::empty())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /event", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp: Transaction<R> = serde_json::from_slice(&resp_bytes)?;
+
+        if resp.pdus.len() != 1 {
+            bail!("Got {} PDUs in /event response", resp.pdus.len());
+        }
+
+        let event = resp
+            .pdus
+            .into_iter()
+            .next()
+            .expect("response has at least one item");
+
+        if event.event_id() != event_id {
+            bail!("Got wrong event from /event")
+        }
+
+        Ok(event)
+    }
+
     pub async fn get_missing_events<R: RoomVersion>(
         &self,
         destination: &str,
@@ -77,6 +144,52 @@ impl FederationClient {
             serde_json::from_slice(&resp_bytes)?;
 
         Ok(resp.events)
+    }
+
+    pub async fn get_state_ids(
+        &self,
+        destination: &str,
+        room_id: &str,
+        event_id: &str,
+    ) -> Result<GetStateIdsResponse, Error> {
+        let path = format!(
+            "/_matrix/federation/v1/send/{}?event_id={}",
+            enc(room_id),
+            enc(event_id)
+        );
+
+        let auth_header =
+            self.make_auth_header::<()>("GET", &path, destination, None);
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::get(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(hyper::Body::empty())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!(
+                "Got {} response code for /get_missing_events",
+                response.status()
+            );
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp: GetStateIdsResponse = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
     }
 
     fn make_auth_header<T: serde::Serialize>(
@@ -198,4 +311,15 @@ struct RequestJson<'a, T> {
 #[derive(Deserialize)]
 struct GetMissingEventsResponse<E> {
     events: Vec<E>,
+}
+
+#[derive(Deserialize)]
+pub struct GetStateIdsResponse {
+    pub auth_chain_ids: Vec<String>,
+    pub pdu_ids: Vec<String>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct Transaction<R: RoomVersion> {
+    pdus: Vec<R::Event>,
 }

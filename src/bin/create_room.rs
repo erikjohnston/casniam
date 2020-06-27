@@ -16,8 +16,9 @@ use sha2::Digest;
 use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 
-use casniam::protocol::client::MemoryTransactionSender;
-use casniam::protocol::client::TransactionSender;
+use casniam::protocol::client::{
+    HyperFederationClient, MemoryTransactionSender, TransactionSender,
+};
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::federation_api::{
     basic::Hooks, basic::StandardFederationAPI, FederationAPI,
@@ -351,7 +352,7 @@ where
         let event_store = self.stores.get_event_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
-        let handler = Handler::new(self.stores.clone());
+        let handler = self.federation_api.handler();
         let stuff = handler.handle_chunk::<R>(chunk).await?;
 
         for info in &stuff {
@@ -759,17 +760,14 @@ async fn main() -> std::io::Result<()> {
     let stores = postgres::PostgresEventStore::new(pool);
 
     let resolver = MatrixResolver::new().await.unwrap();
+    let client = hyper::Client::builder()
+        .build(MatrixConnector::with_resolver(resolver));
 
-    let federation_sender = {
-        let client = hyper::Client::builder()
-            .build(MatrixConnector::with_resolver(resolver));
-
-        MemoryTransactionSender {
-            client,
-            server_name: server_name.clone(),
-            key_name: key_id.clone(),
-            secret_key: secret_key.clone(),
-        }
+    let federation_sender = MemoryTransactionSender {
+        client: client.clone(),
+        server_name: server_name.clone(),
+        key_name: key_id.clone(),
+        secret_key: secret_key.clone(),
     };
 
     let hooks = BasicHooks {
@@ -780,12 +778,22 @@ async fn main() -> std::io::Result<()> {
         stores: stores.clone(),
     };
 
+    let matrix_client = HyperFederationClient::new(
+        client,
+        server_name.clone(),
+        key_id.clone(),
+        secret_key.clone(),
+    );
+
+    let handler = Handler::new(stores.clone(), matrix_client);
+
     let federation_api = StandardFederationAPI::new(
         stores.clone(),
         server_name.clone(),
         key_id.clone(),
         secret_key.clone(),
         hooks,
+        handler,
     );
 
     let app_data = AppData {

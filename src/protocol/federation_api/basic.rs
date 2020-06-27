@@ -49,11 +49,16 @@ pub struct StandardFederationAPI<F, H = ()> {
     key_id: String,
     secret_key: SecretKey,
     hooks: H,
+    handler: Handler<StateMap<String>, F>,
 }
 
 impl<F, H> StandardFederationAPI<F, H> {
     pub fn hook(&self) -> &H {
         &self.hooks
+    }
+
+    pub fn handler(&self) -> &Handler<StateMap<String>, F> {
+        &self.handler
     }
 }
 
@@ -127,8 +132,7 @@ where
             let event_id = event.event_id().to_string();
 
             let chunk = DagChunkFragment::from_event(event.clone());
-            let handler = Handler::new(self.stores.clone());
-            let mut stuff = handler.handle_chunk::<R>(chunk).await?;
+            let mut stuff = self.handler.handle_chunk::<R>(chunk).await?;
 
             for info in &mut stuff {
                 assert!(!info.rejected);
@@ -244,6 +248,7 @@ where
         key_id: String,
         secret_key: SecretKey,
         hooks: H,
+        handler: Handler<StateMap<String>, F>,
     ) -> StandardFederationAPI<F, H> {
         StandardFederationAPI {
             stores,
@@ -251,6 +256,7 @@ where
             key_id,
             secret_key,
             hooks,
+            handler,
         }
     }
 
@@ -272,7 +278,6 @@ where
         let event_store = self.stores.get_event_store::<R>();
 
         let chunks = DagChunkFragment::from_events(events);
-        let handler = Handler::new(self.stores.clone());
 
         for chunk in chunks {
             let room_id = chunk.events[0].room_id().to_string();
@@ -287,7 +292,7 @@ where
                 continue;
             }
 
-            let stuff = handler.handle_chunk::<R>(chunk.clone()).await?;
+            let stuff = self.handler.handle_chunk::<R>(chunk.clone()).await?;
 
             event_store
                 .insert_events(
