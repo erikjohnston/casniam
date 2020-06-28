@@ -215,9 +215,10 @@ where
             let rows = connection
                 .query(
                     r#"
-                        SELECT event_id, type, state_key, state_event_id FROM state WHERE event_id = ANY($1)
+                        SELECT event_id, type, state_key, state_event_id, 1 AS ordering FROM state WHERE event_id = ANY($1)
                         UNION
-                        SELECT event_id, type, state_key, state_event_id FROM state_after WHERE event_id = ANY($1)
+                        SELECT event_id, type, state_key, state_event_id, 2 AS ordering FROM state_after WHERE event_id = ANY($1)
+                        ORDER BY ordering ASC
                     "#,
                     &[&event_ids],
                 )

@@ -244,7 +244,6 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let client = self.client.as_ref().ok_or(format_err!("No http mode"))?;
 
-        // TODO: Need to know origin and current forward extremities
         let room_store = stores.get_room_store::<R>();
 
         let set = room_store.get_forward_extremities(room.to_string()).await?;
