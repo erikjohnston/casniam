@@ -5,7 +5,7 @@ use failure::Error;
 use serde_json::Value;
 
 use crate::protocol::{Event, RoomState, RoomVersion};
-use crate::stores::EventStore;
+use crate::stores::{EventStore, StateStore};
 
 #[derive(Clone, Debug)]
 pub struct EventBuilder {
@@ -123,14 +123,17 @@ impl EventBuilder {
     pub async fn build<
         R: RoomVersion,
         S: RoomState,
-        E: EventStore<R, S> + ?Sized,
+        E: EventStore<R> + ?Sized,
+        SS: StateStore<R, S> + ?Sized,
     >(
         self,
         event_store: &E,
+        state_store: &SS,
     ) -> Result<R::Event, Error> {
         // TODO: Only pull out a subset of the state needed.
-        let state = event_store
-            .get_state_for(
+
+        let state = state_store
+            .get_state_after(
                 &self
                     .prev_events
                     .iter()

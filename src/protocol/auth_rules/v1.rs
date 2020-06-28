@@ -35,7 +35,7 @@ where
     fn check<'a, S: RoomState>(
         e: &'a R::Event,
         s: &'a S,
-        store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &'a (impl EventStore<Self::RoomVersion> + Clone),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
         Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
     }
@@ -54,7 +54,7 @@ where
 pub async fn check<R, S>(
     event: R::Event,
     state: S,
-    store: impl EventStore<R, S>,
+    store: impl EventStore<R>,
 ) -> Result<(), Error>
 where
     R: RoomVersion,

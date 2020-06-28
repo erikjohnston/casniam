@@ -16,20 +16,14 @@ pub mod postgres;
 // need to do lots of clones and stuff. Alas, we need this to be object safe
 // so that it can be used in trait factories and such.
 
-pub trait EventStore<R: RoomVersion, S: RoomState>:
-    Send + Sync + 'static
-{
+pub trait EventStore<R: RoomVersion>: Send + Sync + 'static {
     fn insert_events(
         &self,
-        events: Vec<(R::Event, S)>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>>;
 
-    fn insert_event(
-        &self,
-        event: R::Event,
-        state: S,
-    ) -> BoxFuture<Result<(), Error>> {
-        self.insert_events(vec![(event, state)])
+    fn insert_event(&self, event: R::Event) -> BoxFuture<Result<(), Error>> {
+        self.insert_events(vec![event])
     }
 
     /// Return list of events we have not persisted.
@@ -51,11 +45,6 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
             .map(|r| r.map(|v| v.into_iter().next()))
             .boxed()
     }
-
-    fn get_state_for(
-        &self,
-        event_ids: &[&str],
-    ) -> BoxFuture<Result<Option<S>, Error>>;
 
     fn get_conflicted_auth_chain(
         &self,
@@ -157,25 +146,20 @@ pub trait EventStore<R: RoomVersion, S: RoomState>:
     }
 }
 
-impl<R, S, E> EventStore<R, S> for Arc<E>
+impl<R, E> EventStore<R> for Arc<E>
 where
-    E: EventStore<R, S> + ?Sized,
+    E: EventStore<R> + ?Sized,
     R: RoomVersion,
-    S: RoomState,
 {
     fn insert_events(
         &self,
-        events: Vec<(R::Event, S)>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         self.as_ref().insert_events(events)
     }
 
-    fn insert_event(
-        &self,
-        event: R::Event,
-        state: S,
-    ) -> BoxFuture<Result<(), Error>> {
-        self.as_ref().insert_event(event, state)
+    fn insert_event(&self, event: R::Event) -> BoxFuture<Result<(), Error>> {
+        self.as_ref().insert_event(event)
     }
 
     /// Return list of events we have not persisted.
@@ -200,13 +184,6 @@ where
         self.as_ref().get_event(event_id)
     }
 
-    fn get_state_for(
-        &self,
-        event_ids: &[&str],
-    ) -> BoxFuture<Result<Option<S>, Error>> {
-        self.as_ref().get_state_for(event_ids)
-    }
-
     fn get_conflicted_auth_chain(
         &self,
         event_ids: Vec<Vec<String>>,
@@ -221,6 +198,26 @@ where
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
         self.as_ref().get_backfill(event_ids, limit)
     }
+}
+
+pub trait StateStore<R: RoomVersion, S: RoomState>:
+    Send + Sync + 'static
+{
+    fn insert_state(
+        &self,
+        event: &R::Event,
+        state: S,
+    ) -> BoxFuture<Result<(), Error>>;
+
+    fn get_state_before(
+        &self,
+        event_id: &str,
+    ) -> BoxFuture<Result<Option<S>, Error>>;
+
+    fn get_state_after(
+        &self,
+        event_ids: &[&str],
+    ) -> BoxFuture<Result<Option<S>, Error>>;
 }
 
 pub trait RoomStore<E: Event>: Send + Sync {
@@ -251,7 +248,8 @@ pub trait RoomStore<E: Event>: Send + Sync {
 // }
 
 pub trait StoreFactory<S: RoomState> {
-    fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R, S>>;
+    fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R>>;
+    fn get_state_store<R: RoomVersion>(&self) -> Arc<dyn StateStore<R, S>>;
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>>;
 
     fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore>;

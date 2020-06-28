@@ -26,7 +26,7 @@ where
 
     fn resolve_state<S: RoomState>(
         states: Vec<S>,
-        store: &(impl EventStore<R, S> + Clone),
+        store: &(impl EventStore<R> + Clone),
     ) -> BoxFuture<Result<S, Error>> {
         let store = store.clone();
         async move {
@@ -120,7 +120,7 @@ async fn get_conflicted_set<
     'a,
     R: RoomVersion,
     S: RoomState,
-    ST: EventStore<R, S>,
+    ST: EventStore<R>,
 >(
     store: &'a ST,
     states: &'a [S],
@@ -231,8 +231,7 @@ fn is_power_event(event: &impl Event) -> bool {
 async fn sort_by_reverse_topological_power_ordering<
     'a,
     R: RoomVersion,
-    S: RoomState,
-    ST: EventStore<R, S>,
+    ST: EventStore<R>,
 >(
     events: &'a mut Vec<R::Event>,
     auth_diff: &'a [R::Event],
@@ -288,12 +287,7 @@ async fn sort_by_reverse_topological_power_ordering<
     Ok(())
 }
 
-async fn get_power_level_for_sender<
-    'a,
-    R: RoomVersion,
-    S: RoomState,
-    ST: EventStore<R, S>,
->(
+async fn get_power_level_for_sender<'a, R: RoomVersion, ST: EventStore<R>>(
     event: &'a R::Event,
     store: &'a ST,
 ) -> Result<i64, Error> {
@@ -357,7 +351,7 @@ async fn iterative_auth_checks<
     'a,
     R: RoomVersion,
     S: RoomState,
-    ST: EventStore<R, S> + Clone,
+    ST: EventStore<R> + Clone,
 >(
     sorted_events: &'a [R::Event],
     base_state: &'a S,
@@ -413,12 +407,7 @@ async fn iterative_auth_checks<
     Ok(new_state)
 }
 
-async fn mainline_ordering<
-    'a,
-    R: RoomVersion,
-    S: RoomState,
-    ST: EventStore<R, S>,
->(
+async fn mainline_ordering<'a, R: RoomVersion, ST: EventStore<R>>(
     events: &'a mut Vec<R::Event>,
     resolved_power_id: &'a str,
     store: &'a ST,
@@ -459,12 +448,7 @@ async fn mainline_ordering<
     Ok(())
 }
 
-async fn get_mainline_depth_for_event<
-    'a,
-    R: RoomVersion,
-    S: RoomState,
-    ST: EventStore<R, S>,
->(
+async fn get_mainline_depth_for_event<'a, R: RoomVersion, ST: EventStore<R>>(
     event: &'a R::Event,
     mainline: &'a [String],
     store: &'a ST,
@@ -501,6 +485,7 @@ mod tests {
     use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion3};
     use crate::state_map::StateMap;
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
+    use crate::stores::StateStore;
 
     use futures::executor::block_on;
 
@@ -519,7 +504,7 @@ mod tests {
             builder = builder.with_content(m.as_object().unwrap().clone());
         }
 
-        let mut state = block_on(store.get_state_for(
+        let mut state = block_on(store.get_state_after(
             &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
         ))
         .unwrap()
@@ -527,8 +512,7 @@ mod tests {
 
         builder = builder.with_prev_events(prev_events);
 
-        let event =
-            block_on(builder.build::<RoomVersion3, _, _>(store)).unwrap();
+        let event = block_on(builder.build(store, store)).unwrap();
 
         if let Some(s) = state_key {
             state.insert(event_type, s, event.event_id().to_string());
@@ -536,7 +520,8 @@ mod tests {
 
         let event_id = event.event_id().to_string();
 
-        block_on(store.insert_events(vec![(event, state)])).unwrap();
+        block_on(store.insert_state(&event, state)).unwrap();
+        block_on(store.insert_events(vec![event])).unwrap();
 
         event_id
     }
@@ -554,7 +539,9 @@ mod tests {
             vec![],
         );
 
-        let state = block_on(store.get_state_for(&[&create])).unwrap().unwrap();
+        let state = block_on(store.get_state_after(&[&create]))
+            .unwrap()
+            .unwrap();
 
         let (unconflicted, _) = get_conflicted_events(&[state.clone()]);
 
@@ -574,7 +561,9 @@ mod tests {
             vec![],
         );
 
-        let state = block_on(store.get_state_for(&[&create])).unwrap().unwrap();
+        let state = block_on(store.get_state_after(&[&create]))
+            .unwrap()
+            .unwrap();
 
         let resolved =
             block_on(<RoomVersion3 as RoomVersion>::State::resolve_state(
@@ -659,7 +648,7 @@ mod tests {
             vec![ijr],
         );
 
-        let final_state = block_on(store.get_state_for(&[&imb, &jr1]))
+        let final_state = block_on(store.get_state_after(&[&imb, &jr1]))
             .unwrap()
             .unwrap();
 
@@ -778,8 +767,9 @@ mod tests {
             vec![pa.clone()],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[&mb, &pb])).unwrap().unwrap();
+        let final_state = block_on(store.get_state_after(&[&mb, &pb]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -911,8 +901,9 @@ mod tests {
             vec![pb.clone()],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[&pb, &pc])).unwrap().unwrap();
+        let final_state = block_on(store.get_state_after(&[&pb, &pc]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1046,7 +1037,7 @@ mod tests {
         let t3 =
             create_event(&store, "m.room.topic", Some(""), bob, None, vec![pb]);
 
-        let final_state = block_on(store.get_state_for(&[&pa2, &t3]))
+        let final_state = block_on(store.get_state_after(&[&pa2, &t3]))
             .unwrap()
             .unwrap();
 
@@ -1168,8 +1159,9 @@ mod tests {
             vec![t2],
         );
 
-        let final_state =
-            block_on(store.get_state_for(&[&mb, &t1])).unwrap().unwrap();
+        let final_state = block_on(store.get_state_after(&[&mb, &t1]))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             final_state.get("m.room.power_levels", ""),
@@ -1333,7 +1325,7 @@ mod tests {
             vec![msg.clone()],
         );
 
-        let final_state = block_on(store.get_state_for(&[&msg, &t4]))
+        let final_state = block_on(store.get_state_after(&[&msg, &t4]))
             .unwrap()
             .unwrap();
 

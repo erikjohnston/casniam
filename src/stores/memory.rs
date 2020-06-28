@@ -1,6 +1,8 @@
 use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::state_map::StateMap;
-use crate::stores::{EventStore, RoomStore, RoomVersionStore, StoreFactory};
+use crate::stores::{
+    EventStore, RoomStore, RoomVersionStore, StateStore, StoreFactory,
+};
 
 use anymap::{any::Any, Map};
 use failure::Error;
@@ -58,20 +60,19 @@ where
     }
 }
 
-impl<R, S> EventStore<R, S> for MemoryEventStore<R, S>
+impl<R, S> EventStore<R> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + Send + Sync + 'static,
+    S: RoomState,
 {
     fn insert_events(
         &self,
-        events: Vec<(R::Event, S)>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
-        for (event, state) in events {
-            store.state_map.insert(event.event_id().to_string(), state);
+        for event in events {
             store.event_map.insert(event.event_id().to_string(), event);
         }
 
@@ -109,8 +110,38 @@ where
         )
         .boxed()
     }
+}
 
-    fn get_state_for(
+impl<R, S> StateStore<R, S> for MemoryEventStore<R, S>
+where
+    R: RoomVersion + 'static,
+    R::Event: 'static,
+    S: RoomState + Send + Sync + 'static,
+{
+    fn insert_state(
+        &self,
+        event: &R::Event,
+        state: S,
+    ) -> BoxFuture<Result<(), Error>> {
+        let mut store = self.0.write().expect("Mutex poisoned");
+
+        store.state_map.insert(event.event_id().to_string(), state);
+
+        future::ok(()).boxed()
+    }
+
+    fn get_state_before(
+        &self,
+        event_id: &str,
+    ) -> BoxFuture<Result<Option<S>, Error>> {
+        let store = self.0.read().expect("Mutex poisoned");
+
+        let state = store.state_map.get(event_id).cloned();
+
+        future::ok(state).boxed()
+    }
+
+    fn get_state_after(
         &self,
         event_ids: &[&str],
     ) -> BoxFuture<Result<Option<S>, Error>> {
@@ -284,9 +315,13 @@ impl Default for MemoryStoreFactory {
 }
 
 impl StoreFactory<StateMap<String>> for MemoryStoreFactory {
-    fn get_event_store<R: RoomVersion>(
+    fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R>> {
+        Arc::new(self.get_memory_store::<R>())
+    }
+
+    fn get_state_store<R: RoomVersion>(
         &self,
-    ) -> Arc<dyn EventStore<R, StateMap<String>>> {
+    ) -> Arc<dyn StateStore<R, StateMap<String>>> {
         Arc::new(self.get_memory_store::<R>())
     }
 

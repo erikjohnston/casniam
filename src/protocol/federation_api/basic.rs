@@ -73,6 +73,7 @@ where
         user_id: String,
     ) -> BoxFuture<FederationResult<MakeJoinResponse<R::Event>>> {
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         async move {
@@ -103,7 +104,7 @@ where
             })))
             .with_prev_events(prev_event_ids)
             .origin(self.server_name.clone())
-            .build(event_store.as_ref())
+            .build(event_store.as_ref(), state_store.as_ref())
             .await?;
 
             event.sign(
@@ -126,9 +127,27 @@ where
         event: R::Event,
     ) -> BoxFuture<FederationResult<SendJoinResponse<R::Event>>> {
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         async move {
+            if event.event_type() != "m.room.member" {
+                Err(format_err!("Event is not a membership event"))?
+            }
+
+            if event.state_key().is_none() {
+                Err(format_err!("Event is not a state event"))?
+            };
+
+            if event
+                .content()
+                .get("membership")
+                .and_then(serde_json::Value::as_str)
+                != Some("join")
+            {
+                Err(format_err!("Event does not have membership join"))?
+            }
+
             let event_id = event.event_id().to_string();
 
             let chunk = DagChunkFragment::from_event(event.clone());
@@ -143,9 +162,11 @@ where
                     &self.secret_key,
                 );
 
-                event_store
-                    .insert_event(info.event.clone(), info.state_before.clone())
+                state_store
+                    .insert_state(&info.event, info.state_before.clone())
                     .await?;
+
+                event_store.insert_event(info.event.clone()).await?;
 
                 room_store.insert_new_event(info.event.clone()).await?;
             }
@@ -154,7 +175,10 @@ where
                 .on_send_join::<R>(event.sender().to_string())
                 .await?;
 
-            let state = event_store.get_state_for(&[&event_id]).await?.unwrap();
+            let state = expect_or_err!(
+                state_store.get_state_after(&[&event_id]).await?
+            );
+
             let state_events = event_store
                 .get_events(
                     &state.values().map(|e| e as &str).collect::<Vec<_>>(),
@@ -276,6 +300,7 @@ where
 
         let room_store = self.stores.get_room_store::<R>();
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
 
         let chunks = DagChunkFragment::from_events(events);
 
@@ -294,14 +319,15 @@ where
 
             let stuff = self.handler.handle_chunk::<R>(chunk.clone()).await?;
 
+            for info in &stuff {
+                state_store
+                    .insert_state(&info.event, info.state_before.clone())
+                    .await?;
+            }
+
             event_store
                 .insert_events(
-                    stuff
-                        .iter()
-                        .map(|info| {
-                            (info.event.clone(), info.state_before.clone())
-                        })
-                        .collect(),
+                    stuff.iter().map(|info| info.event.clone()).collect(),
                 )
                 .await?;
 

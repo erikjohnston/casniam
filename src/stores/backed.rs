@@ -1,4 +1,4 @@
-use crate::protocol::{Event, RoomState, RoomStateResolver, RoomVersion};
+use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::stores::memory::{new_memory_store, MemoryEventStore};
 use crate::stores::EventStore;
 
@@ -36,7 +36,7 @@ impl<R, S, ES> BackedStore<R, S, ES>
 where
     R: RoomVersion,
     S: RoomState,
-    ES: EventStore<R, S> + ?Sized,
+    ES: EventStore<R> + ?Sized,
 {
     pub fn new(store: Arc<ES>) -> BackedStore<R, S, ES> {
         BackedStore {
@@ -46,15 +46,15 @@ where
     }
 }
 
-impl<R, S, ES> EventStore<R, S> for BackedStore<R, S, ES>
+impl<R, S, ES> EventStore<R> for BackedStore<R, S, ES>
 where
     R: RoomVersion,
     S: RoomState,
-    ES: EventStore<R, S> + ?Sized,
+    ES: EventStore<R> + ?Sized,
 {
     fn insert_events(
         &self,
-        events: Vec<(R::Event, S)>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         self.memory.insert_events(events)
     }
@@ -123,35 +123,6 @@ where
             }
 
             Ok(events)
-        }
-        .boxed()
-    }
-
-    fn get_state_for(
-        &self,
-        event_ids: &[&str],
-    ) -> BoxFuture<Result<Option<S>, Error>> {
-        let event_ids: Vec<_> =
-            event_ids.iter().map(|&e| e.to_string()).collect();
-
-        async move {
-            let mut states = Vec::with_capacity(event_ids.len());
-
-            for event_id in &event_ids {
-                if let Some(s) = self.memory.get_state_for(&[event_id]).await? {
-                    states.push(s.into_iter().collect());
-                } else if let Some(s) =
-                    self.store.get_state_for(&[event_id]).await?
-                {
-                    states.push(s);
-                } else {
-                    // We couldn't find one of the event IDs, so we bail.
-                    return Ok(None);
-                }
-            }
-
-            let state = R::State::resolve_state(states, self).await?;
-            Ok(Some(state))
         }
         .boxed()
     }

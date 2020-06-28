@@ -66,6 +66,7 @@ where
         let infos = infos.to_vec();
 
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         async move {
@@ -92,7 +93,7 @@ where
                         extrems.iter().map(|e| e as &str).collect::<Vec<_>>();
 
                     let state: StateMap<String> =
-                        event_store.get_state_for(&event_ids).await?.unwrap();
+                        state_store.get_state_after(&event_ids).await?.unwrap();
 
                     let mut event: R::Event = EventBuilder::from_json(json!({
                         "room_id": room_id,
@@ -104,7 +105,7 @@ where
                         },
                         "prev_events": extrems,
                     }))?
-                    .build::<R, StateMap<String>, _>(event_store.as_ref())
+                    .build(event_store.as_ref(), state_store.as_ref())
                     .await?;
 
                     event.sign(
@@ -113,10 +114,8 @@ where
                         &self.secret_key,
                     );
 
-                    event_store
-                        .insert_event(event.clone(), state.clone())
-                        .await?;
-
+                    state_store.insert_state(&event, state).await?;
+                    event_store.insert_event(event.clone()).await?;
                     room_store.insert_new_event(event.clone()).await?;
 
                     info!("Sending echo event to {}", event_origin);
@@ -182,6 +181,7 @@ where
         R::Event: Serialize,
     {
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         let creator = format!("@alice:{}", self.server_name);
@@ -202,7 +202,7 @@ where
             },
             "prev_events": prev_events,
         }))?
-        .build(event_store.as_ref())
+        .build(event_store.as_ref(), state_store.as_ref())
         .await?;
 
         event.sign(
@@ -211,17 +211,15 @@ where
             &self.secret_key,
         );
 
-        let state = event_store
-            .get_state_for(
+        let state = state_store
+            .get_state_after(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        event_store
-            .insert_event(event.clone(), state.clone())
-            .await?;
-
+        state_store.insert_state(&event, state).await?;
+        event_store.insert_event(event.clone()).await?;
         room_store.insert_new_event(event.clone()).await?;
 
         info!("Sending 'hello' event to {}", remote);
@@ -244,7 +242,7 @@ where
             },
             "prev_events": prev_events,
         }))?
-        .build(event_store.as_ref())
+        .build(event_store.as_ref(), state_store.as_ref())
         .await?;
 
         event.sign(
@@ -253,17 +251,15 @@ where
             &self.secret_key,
         );
 
-        let state = event_store
-            .get_state_for(
+        let state = state_store
+            .get_state_after(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        event_store
-            .insert_event(event.clone(), state.clone())
-            .await?;
-
+        state_store.insert_state(&event, state).await?;
+        event_store.insert_event(event.clone()).await?;
         room_store.insert_new_event(event.clone()).await?;
 
         info!("Sending 'leave' event to {}", remote);
@@ -285,6 +281,7 @@ where
         builders: B,
     ) -> Result<DagChunkFragment<R::Event>, Error> {
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         let mut chunk = DagChunkFragment::new();
@@ -300,8 +297,8 @@ where
             )
             .await?;
 
-        let mut state = event_store
-            .get_state_for(
+        let mut state = state_store
+            .get_state_after(
                 &prev_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
@@ -350,6 +347,7 @@ where
         R::Event: Serialize,
     {
         let event_store = self.stores.get_event_store::<R>();
+        let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         let handler = self.federation_api.handler();
@@ -359,12 +357,15 @@ where
             assert!(!info.rejected);
         }
 
+        for info in &stuff {
+            state_store
+                .insert_state(&info.event, info.state_before.clone())
+                .await?;
+        }
+
         event_store
             .insert_events(
-                stuff
-                    .iter()
-                    .map(|info| (info.event.clone(), info.state_before.clone()))
-                    .collect(),
+                stuff.iter().map(|info| info.event.clone()).collect(),
             )
             .await?;
 

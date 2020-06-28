@@ -3,7 +3,7 @@ use crate::stores::{EventStore, StoreFactory};
 
 use futures::future::BoxFuture;
 use futures::future::Future;
-use log::info;
+use log::{info, warn};
 use petgraph::visit::Walker;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -85,7 +85,7 @@ pub trait RoomStateResolver {
 
     fn resolve_state<'a, S: RoomState>(
         states: Vec<S>,
-        store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &'a (impl EventStore<Self::RoomVersion> + Clone),
     ) -> BoxFuture<Result<S, Error>>;
 }
 
@@ -125,7 +125,7 @@ pub trait AuthRules {
     fn check<S: RoomState>(
         e: &<Self::RoomVersion as RoomVersion>::Event,
         s: &S,
-        store: &(impl EventStore<Self::RoomVersion, S> + Clone),
+        store: &(impl EventStore<Self::RoomVersion> + Clone),
     ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
 
     fn auth_types_for_event(
@@ -380,6 +380,7 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let stores = self.stores.clone();
         let event_store = stores.get_event_store::<R>();
+        let state_store = stores.get_state_store::<R>();
 
         // let missing = get_missing(&chunk.events);
         let missing = &chunk.backward_extremities;
@@ -399,11 +400,13 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         let mut event_to_state_after: HashMap<String, S> = HashMap::new();
 
         for event_id in missing {
-            let state = event_store.get_state_for(&[event_id]).await?;
-            event_to_state_after.insert(event_id.to_string(), state.unwrap());
+            let state = state_store.get_state_after(&[&event_id]).await?;
+            let state = expect_or_err!(state);
+
+            event_to_state_after.insert(event_id.to_string(), state);
         }
 
-        let store = BackedStore::new(event_store.clone());
+        let store: BackedStore<R, S, _> = BackedStore::new(event_store.clone());
 
         let mut persisted_state = Vec::new();
         for event in chunk.events {
@@ -427,7 +430,7 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                         false
                     }
                     Err(err) => {
-                        info!(
+                        warn!(
                             "Denied event {} because: {}",
                             event.event_type(),
                             err
@@ -447,9 +450,11 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 }
             }
 
-            store
-                .insert_event(event.clone(), state_before.clone())
-                .await?;
+            // state_store
+            //     .insert_state(event.event_id(), state_before.clone())
+            //     .await?;
+
+            store.insert_event(event.clone()).await?;
 
             persisted_state.push(PersistEventInfo {
                 event,
@@ -617,12 +622,10 @@ where
 mod tests {
     use super::*;
     use crate::state_map::StateMap;
-    use crate::stores::{RoomStore, RoomVersionStore};
+    use crate::stores::memory;
 
     use futures::executor::block_on;
     use futures::future;
-
-    use std::sync::Arc;
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     struct TestEvent {
@@ -778,7 +781,7 @@ mod tests {
 
         fn resolve_state<'a, S: RoomState>(
             _states: Vec<S>,
-            _store: &'a (impl EventStore<Self::RoomVersion, S> + Clone),
+            _store: &'a (impl EventStore<Self::RoomVersion> + Clone),
         ) -> BoxFuture<Result<S, Error>> {
             Box::pin(future::ok(S::new()))
         }
@@ -792,7 +795,7 @@ mod tests {
         fn check<S: RoomState>(
             _e: &<Self::RoomVersion as RoomVersion>::Event,
             _s: &S,
-            _store: &(impl EventStore<Self::RoomVersion, S> + Clone),
+            _store: &(impl EventStore<Self::RoomVersion> + Clone),
         ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
             Box::pin(future::ok(()))
         }
@@ -818,67 +821,11 @@ mod tests {
         const VERSION: &'static str = "DUMMY";
     }
 
-    #[derive(Clone, Debug)]
-    struct DummyStore;
-
-    impl<R> EventStore<R, StateMap<String>> for DummyStore
-    where
-        R: RoomVersion,
-    {
-        fn insert_events(
-            &self,
-            _events: Vec<(R::Event, StateMap<String>)>,
-        ) -> BoxFuture<Result<(), Error>> {
-            unimplemented!()
-        }
-
-        fn missing_events(
-            &self,
-            _event_ids: &[&str],
-        ) -> BoxFuture<Result<Vec<String>, Error>> {
-            unimplemented!()
-        }
-
-        fn get_events(
-            &self,
-            _event_ids: &[&str],
-        ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
-            unimplemented!()
-        }
-
-        fn get_state_for(
-            &self,
-            _event_ids: &[&str],
-        ) -> BoxFuture<Result<Option<StateMap<String>>, Error>> {
-            unimplemented!()
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    struct DummyStoreFactory;
-
-    impl StoreFactory<StateMap<String>> for DummyStoreFactory {
-        fn get_event_store<R: RoomVersion>(
-            &self,
-        ) -> Arc<dyn EventStore<R, StateMap<String>>> {
-            Arc::new(DummyStore)
-        }
-
-        fn get_room_store<R: RoomVersion>(
-            &self,
-        ) -> Arc<dyn RoomStore<R::Event>> {
-            unimplemented!()
-        }
-
-        fn get_room_version_store(&self) -> Arc<dyn RoomVersionStore> {
-            unimplemented!()
-        }
-    }
-
     #[test]
     fn test_handle() {
-        let handler =
-            Handler::<StateMap<String>, _>::no_http(DummyStoreFactory);
+        let handler = Handler::<StateMap<String>, _>::no_http(
+            memory::MemoryStoreFactory::new(),
+        );
 
         let events = vec![
             TestEvent {

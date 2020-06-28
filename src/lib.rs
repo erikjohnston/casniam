@@ -8,6 +8,16 @@ extern crate failure;
 #[macro_use]
 extern crate serde_json;
 
+macro_rules! expect_or_err {
+    ($e:expr) => {
+        if let Some(r) = $e {
+            r
+        } else {
+            Err(format_err!("'{}' was None", stringify!($e)))?
+        }
+    };
+}
+
 pub mod json;
 pub mod protocol;
 pub mod state_map;

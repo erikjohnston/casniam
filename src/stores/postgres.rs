@@ -3,7 +3,9 @@ use crate::protocol::{
     RoomVersion4,
 };
 use crate::state_map::StateMap;
-use crate::stores::{EventStore, RoomStore, RoomVersionStore, StoreFactory};
+use crate::stores::{
+    EventStore, RoomStore, RoomVersionStore, StateStore, StoreFactory,
+};
 
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::tokio_postgres::NoTls;
@@ -29,16 +31,14 @@ impl PostgresEventStore {
     }
 }
 
-impl<R, S> EventStore<R, S> for PostgresEventStore
+impl<R> EventStore<R> for PostgresEventStore
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + Send + Sync + 'static,
-    <S as IntoIterator>::IntoIter: Send,
 {
     fn insert_events(
         &self,
-        events: Vec<(R::Event, S)>,
+        events: Vec<R::Event>,
     ) -> BoxFuture<Result<(), Error>> {
         async move {
             let mut connection: PooledConnection<
@@ -48,21 +48,12 @@ where
             let txn = connection.transaction().await?;
 
             // TODO: Pipeline these queries.
-            for (event, state) in events {
+            for event in events {
                 txn.execute(
                     r#"INSERT INTO events (room_id, event_id, json) VALUES ($1, $2, $3)"#,
                     &[&event.room_id(), &event.event_id(), &serde_json::to_string(&event)?],
                 )
                 .await?;
-
-                // TODO: Persist state separately.
-                for ((typ, state_key), event_id) in state.into_iter() {
-                    txn.execute(
-                        r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
-                        &[&event.event_id(), &typ, &state_key, &event_id],
-                    )
-                    .await?;
-                }
             }
 
             txn.commit().await?;
@@ -130,8 +121,87 @@ where
         }
         .boxed()
     }
+}
 
-    fn get_state_for(
+impl<R, S> StateStore<R, S> for PostgresEventStore
+where
+    R: RoomVersion + 'static,
+    R::Event: 'static,
+    S: RoomState + Send + Sync + 'static,
+    <S as IntoIterator>::IntoIter: Send,
+{
+    fn insert_state(
+        &self,
+        event: &R::Event,
+        state: S,
+    ) -> BoxFuture<Result<(), Error>> {
+        let event_id = event.event_id().to_string();
+
+        let event_type = event.event_type().to_string();
+        let event_state_key = event.state_key().map(str::to_string);
+
+        async move {
+            let mut connection: PooledConnection<
+                PostgresConnectionManager<NoTls>,
+            > = self.pool.get().await?;
+
+            let txn = connection.transaction().await?;
+
+            // TODO: Persist state separately.
+            for ((typ, state_key), state_id) in state.into_iter() {
+                txn.execute(
+                    r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
+                    &[&event_id, &typ, &state_key, &state_id],
+                )
+                .await?;
+            }
+
+            if let Some(state_key) = event_state_key {
+                txn.execute(
+                    r#"INSERT INTO state_after (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
+                    &[&event_id, &event_type, &state_key, &event_id],
+                )
+                .await?;
+            }
+
+            txn.commit().await?;
+
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn get_state_before(
+        &self,
+        event_id: &str,
+    ) -> BoxFuture<Result<Option<S>, Error>> {
+        let event_id = event_id.to_string();
+
+        async move {
+            let connection: PooledConnection<PostgresConnectionManager<NoTls>> =
+                self.pool.get().await?;
+
+            let rows = connection
+                .query(
+                    "SELECT type, state_key, state_event_id FROM state WHERE event_id = $1",
+                    &[&event_id],
+                )
+                .await?;
+
+            let state = rows.into_iter().map(|row| {
+                let typ: String = row.get(0);
+                let state_key: String = row.get(1);
+                let state_event_id: String = row.get(2);
+
+                ((typ, state_key), state_event_id)
+            }).collect();
+
+            Ok(Some(state))
+        }
+        .boxed()
+    }
+
+    fn get_state_after(
         &self,
         event_ids: &[&str],
     ) -> BoxFuture<Result<Option<S>, Error>> {
@@ -144,7 +214,11 @@ where
 
             let rows = connection
                 .query(
-                    "SELECT event_id, type, state_key, state_event_id FROM state WHERE event_id = ANY($1)",
+                    r#"
+                        SELECT event_id, type, state_key, state_event_id FROM state WHERE event_id = ANY($1)
+                        UNION
+                        SELECT event_id, type, state_key, state_event_id FROM state_after WHERE event_id = ANY($1)
+                    "#,
                     &[&event_ids],
                 )
                 .await?;
@@ -307,9 +381,13 @@ impl RoomVersionStore for PostgresEventStore {
 }
 
 impl StoreFactory<StateMap<String>> for PostgresEventStore {
-    fn get_event_store<R: RoomVersion>(
+    fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R>> {
+        Arc::new(self.clone())
+    }
+
+    fn get_state_store<R: RoomVersion>(
         &self,
-    ) -> Arc<dyn EventStore<R, StateMap<String>>> {
+    ) -> Arc<dyn StateStore<R, StateMap<String>>> {
         Arc::new(self.clone())
     }
 
