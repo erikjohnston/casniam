@@ -13,7 +13,7 @@ macro_rules! expect_or_err {
         if let Some(r) = $e {
             r
         } else {
-            Err(format_err!("'{}' was None", stringify!($e)))?
+            return Err(format_err!("'{}' was None", stringify!($e)).into());
         }
     };
 }

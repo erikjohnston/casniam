@@ -132,11 +132,13 @@ where
 
         async move {
             if event.event_type() != "m.room.member" {
-                Err(format_err!("Event is not a membership event"))?
+                return Err(
+                    format_err!("Event is not a membership event").into()
+                );
             }
 
             if event.state_key().is_none() {
-                Err(format_err!("Event is not a state event"))?
+                return Err(format_err!("Event is not a state event").into());
             };
 
             if event
@@ -145,7 +147,9 @@ where
                 .and_then(serde_json::Value::as_str)
                 != Some("join")
             {
-                Err(format_err!("Event does not have membership join"))?
+                return Err(
+                    format_err!("Event does not have membership join").into()
+                );
             }
 
             let event_id = event.event_id().to_string();

@@ -242,7 +242,10 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let room = chunk.events[0].room_id().to_string();
 
-        let client = self.client.as_ref().ok_or(format_err!("No http mode"))?;
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| format_err!("No http mode"))?;
 
         let room_store = stores.get_room_store::<R>();
 
