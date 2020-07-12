@@ -43,7 +43,7 @@ pub trait Event:
     fn sender(&self) -> &str;
     fn state_key(&self) -> Option<&str>;
 
-    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
+    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState<String>>(
         builder: events::EventBuilder,
         state: S,
         prev_events: Vec<Self>,
@@ -83,15 +83,15 @@ where
 pub trait RoomStateResolver {
     type RoomVersion: RoomVersion;
 
-    fn resolve_state<'a, S: RoomState>(
+    fn resolve_state<'a, S: RoomState<String>>(
         states: Vec<S>,
         store: &'a (impl EventStore<Self::RoomVersion> + Clone),
     ) -> BoxFuture<Result<S, Error>>;
 }
 
-pub trait RoomState:
-    IntoIterator<Item = ((String, String), String)>
-    + FromIterator<((String, String), String)>
+pub trait RoomState<E>:
+    IntoIterator<Item = ((String, String), E)>
+    + FromIterator<((String, String), E)>
     + Default
     + Clone
     + Debug
@@ -101,7 +101,7 @@ pub trait RoomState:
 {
     fn new() -> Self;
 
-    fn add_event(&mut self, etype: String, state_key: String, event_id: String);
+    fn add_event(&mut self, etype: String, state_key: String, event_id: E);
 
     fn remove(&mut self, etype: &str, state_key: &str);
 
@@ -109,12 +109,12 @@ pub trait RoomState:
         &self,
         event_type: impl Borrow<str>,
         state_key: impl Borrow<str>,
-    ) -> Option<&str>;
+    ) -> Option<&E>;
 
     fn get_event_ids(
         &self,
         types: impl IntoIterator<Item = (String, String)>,
-    ) -> Vec<String>;
+    ) -> Vec<E>;
 
     fn keys(&self) -> Vec<(&str, &str)>;
 }
@@ -122,7 +122,7 @@ pub trait RoomState:
 pub trait AuthRules {
     type RoomVersion: RoomVersion;
 
-    fn check<S: RoomState>(
+    fn check<S: RoomState<String>>(
         e: &<Self::RoomVersion as RoomVersion>::Event,
         s: &S,
         store: &(impl EventStore<Self::RoomVersion> + Clone),
@@ -174,7 +174,7 @@ pub trait FederationClient {
         limit: usize,
     ) -> BoxFuture<Result<Vec<E>, Error>>;
 
-    fn get_state_at<S: RoomState>(
+    fn get_state_at<S: RoomState<String>>(
         &self,
         event_id: &str,
     ) -> BoxFuture<Result<S, Error>>;
@@ -189,13 +189,13 @@ pub trait FederationTransactionQueue {
 }
 
 #[derive(Clone)]
-pub struct Handler<S: RoomState, F> {
+pub struct Handler<S: RoomState<String>, F> {
     stores: F,
     client: Option<client::HyperFederationClient>,
     _data: PhantomData<S>, // client: Box<FederationClient>,
 }
 
-impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
+impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
     pub fn new(stores: F, client: client::HyperFederationClient) -> Self {
         Handler {
             stores,
@@ -546,7 +546,7 @@ impl<S: RoomState, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PersistEventInfo<R: RoomVersion, S: RoomState> {
+pub struct PersistEventInfo<R: RoomVersion, S: RoomState<String>> {
     pub event: R::Event,
     pub rejected: bool,
     pub state_before: S,
@@ -775,7 +775,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
+        fn from_builder<R: RoomVersion<Event = Self>, S: RoomState<String>>(
             _builder: events::EventBuilder,
             _state: S,
             _prev_events: Vec<Self>,
@@ -873,7 +873,7 @@ mod tests {
     impl RoomStateResolver for DummyState {
         type RoomVersion = DummyVersion;
 
-        fn resolve_state<'a, S: RoomState>(
+        fn resolve_state<'a, S: RoomState<String>>(
             _states: Vec<S>,
             _store: &'a (impl EventStore<Self::RoomVersion> + Clone),
         ) -> BoxFuture<Result<S, Error>> {
@@ -886,7 +886,7 @@ mod tests {
     impl AuthRules for DummyAuth {
         type RoomVersion = DummyVersion;
 
-        fn check<S: RoomState>(
+        fn check<S: RoomState<String>>(
             _e: &<Self::RoomVersion as RoomVersion>::Event,
             _s: &S,
             _store: &(impl EventStore<Self::RoomVersion> + Clone),

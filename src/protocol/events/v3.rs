@@ -29,7 +29,10 @@ impl AsRef<EventV2> for SignedEventV3 {
 }
 
 impl SignedEventV3 {
-    pub async fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
+    pub async fn from_builder<
+        R: RoomVersion<Event = Self>,
+        S: RoomState<String>,
+    >(
         builder: super::EventBuilder,
         state: S,
         prev_events: Vec<R::Event>,
@@ -141,7 +144,7 @@ impl Event for SignedEventV3 {
         self.signed.as_ref().state_key()
     }
 
-    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState>(
+    fn from_builder<R: RoomVersion<Event = Self>, S: RoomState<String>>(
         builder: super::EventBuilder,
         state: S,
         prev_events: Vec<R::Event>,

@@ -32,7 +32,7 @@ where
 {
     type RoomVersion = R;
 
-    fn check<'a, S: RoomState>(
+    fn check<'a, S: RoomState<String>>(
         e: &'a R::Event,
         s: &'a S,
         store: &'a (impl EventStore<Self::RoomVersion> + Clone),
@@ -58,7 +58,7 @@ pub async fn check<R, S>(
 ) -> Result<(), Error>
 where
     R: RoomVersion,
-    S: RoomState + Clone,
+    S: RoomState<String> + Clone,
 {
     let types = auth_types_for_event(
         event.event_type(),

@@ -24,21 +24,20 @@ pub mod state_map;
 pub mod stores;
 
 use std::borrow::Borrow;
+use std::fmt::Debug;
 
 use crate::protocol::RoomState;
 use crate::state_map::StateMap;
 
-impl RoomState for StateMap<String> {
+impl<E> RoomState<E> for StateMap<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
     fn new() -> Self {
         StateMap::new()
     }
 
-    fn add_event(
-        &mut self,
-        etype: String,
-        state_key: String,
-        event_id: String,
-    ) {
+    fn add_event(&mut self, etype: String, state_key: String, event_id: E) {
         self.insert(&etype, &state_key, event_id);
     }
 
@@ -50,15 +49,14 @@ impl RoomState for StateMap<String> {
         &self,
         event_type: impl Borrow<str>,
         state_key: impl Borrow<str>,
-    ) -> Option<&str> {
+    ) -> Option<&E> {
         self.get(event_type.borrow(), state_key.borrow())
-            .map(|e| e as &str)
     }
 
     fn get_event_ids(
         &self,
         types: impl IntoIterator<Item = (String, String)>,
-    ) -> Vec<String> {
+    ) -> Vec<E> {
         types
             .into_iter()
             .filter_map(|(t, s)| self.get(&t, &s))

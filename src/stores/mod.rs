@@ -200,7 +200,7 @@ where
     }
 }
 
-pub trait StateStore<R: RoomVersion, S: RoomState>:
+pub trait StateStore<R: RoomVersion, S: RoomState<String>>:
     Send + Sync + 'static
 {
     fn insert_state(
@@ -247,7 +247,7 @@ pub trait RoomStore<E: Event>: Send + Sync {
 // {
 // }
 
-pub trait StoreFactory<S: RoomState> {
+pub trait StoreFactory<S: RoomState<String>> {
     fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R>>;
     fn get_state_store<R: RoomVersion>(&self) -> Arc<dyn StateStore<R, S>>;
     fn get_room_store<R: RoomVersion>(&self) -> Arc<dyn RoomStore<R::Event>>;

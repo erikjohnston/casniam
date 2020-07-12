@@ -79,13 +79,22 @@ impl FromStr for WellKnownEmptyKeys {
 }
 
 /// A specialised container for storing state mapping.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateMap<E: Debug + Clone> {
     well_known: HashMap<WellKnownEmptyKeys, E>,
     membership: HashMap<String, E>,
     aliases: HashMap<String, E>,
     invites: HashMap<String, E>,
     others: HashMap<String, HashMap<String, E>>,
+}
+
+impl<E> Default for StateMap<E>
+where
+    E: Debug + Clone,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<E> StateMap<E>

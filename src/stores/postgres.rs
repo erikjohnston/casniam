@@ -127,7 +127,7 @@ impl<R, S> StateStore<R, S> for PostgresEventStore
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + Send + Sync + 'static,
+    S: RoomState<String> + Send + Sync + 'static,
     <S as IntoIterator>::IntoIter: Send,
 {
     fn insert_state(

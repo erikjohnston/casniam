@@ -24,7 +24,7 @@ where
 {
     type RoomVersion = R;
 
-    fn resolve_state<S: RoomState>(
+    fn resolve_state<S: RoomState<String>>(
         states: Vec<S>,
         store: &(impl EventStore<R> + Clone),
     ) -> BoxFuture<Result<S, Error>> {
@@ -51,8 +51,10 @@ where
             )
             .await?;
 
-            let power_level_id =
-                resolved.get("m.room.power_levels", "").unwrap_or_default();
+            let power_level_id = resolved
+                .get("m.room.power_levels", "")
+                .map(|e| e as &str)
+                .unwrap_or_default();
 
             mainline_ordering(
                 &mut conflicted_standard_events,
@@ -74,7 +76,7 @@ where
 }
 
 /// Get all entries that do not match across all states
-fn get_conflicted_events<S: RoomState>(
+fn get_conflicted_events<S: RoomState<String>>(
     states: &[S],
 ) -> (S, BTreeMap<(String, String), BTreeSet<String>>) {
     let mut keys = BTreeSet::new();
@@ -119,7 +121,7 @@ fn get_conflicted_events<S: RoomState>(
 async fn get_conflicted_set<
     'a,
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
     ST: EventStore<R>,
 >(
     store: &'a ST,
@@ -350,7 +352,7 @@ async fn get_power_level_for_sender<'a, R: RoomVersion, ST: EventStore<R>>(
 async fn iterative_auth_checks<
     'a,
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
     ST: EventStore<R> + Clone,
 >(
     sorted_events: &'a [R::Event],

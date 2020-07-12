@@ -15,7 +15,7 @@ use std::mem;
 use std::sync::{Arc, RwLock};
 
 #[derive(Default, Debug)]
-pub struct MemoryEventStoreInner<R: RoomVersion, S: RoomState> {
+pub struct MemoryEventStoreInner<R: RoomVersion, S: RoomState<String>> {
     event_map: BTreeMap<String, R::Event>,
     state_map: BTreeMap<String, S>,
 
@@ -23,12 +23,12 @@ pub struct MemoryEventStoreInner<R: RoomVersion, S: RoomState> {
     backward_edges: BTreeMap<String, BTreeSet<String>>,
 }
 
-pub struct MemoryEventStore<R: RoomVersion, S: RoomState>(
+pub struct MemoryEventStore<R: RoomVersion, S: RoomState<String>>(
     Arc<RwLock<MemoryEventStoreInner<R, S>>>,
 );
 
-pub fn new_memory_store<R: RoomVersion, S: RoomState>() -> MemoryEventStore<R, S>
-{
+pub fn new_memory_store<R: RoomVersion, S: RoomState<String>>(
+) -> MemoryEventStore<R, S> {
     MemoryEventStore(Arc::new(RwLock::new(MemoryEventStoreInner {
         event_map: BTreeMap::new(),
         state_map: BTreeMap::new(),
@@ -41,7 +41,7 @@ impl<R, S> MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + Send + Sync + 'static,
+    S: RoomState<String> + Send + Sync + 'static,
 {
     pub fn get_all_events(&self) -> Vec<R::Event> {
         let store = self.0.read().expect("Mutex poisoned");
@@ -53,7 +53,7 @@ where
 impl<R, S> Clone for MemoryEventStore<R, S>
 where
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
 {
     fn clone(&self) -> MemoryEventStore<R, S> {
         MemoryEventStore(self.0.clone())
@@ -64,7 +64,7 @@ impl<R, S> EventStore<R> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState,
+    S: RoomState<String>,
 {
     fn insert_events(
         &self,
@@ -116,7 +116,7 @@ impl<R, S> StateStore<R, S> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + Send + Sync + 'static,
+    S: RoomState<String> + Send + Sync + 'static,
 {
     fn insert_state(
         &self,
@@ -188,7 +188,7 @@ impl<R, S> RoomStore<R::Event> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
-    S: RoomState + 'static,
+    S: RoomState<String> + 'static,
 {
     fn insert_new_events(
         &self,

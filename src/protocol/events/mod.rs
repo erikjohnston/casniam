@@ -122,7 +122,7 @@ impl EventBuilder {
 
     pub async fn build<
         R: RoomVersion,
-        S: RoomState,
+        S: RoomState<String>,
         E: EventStore<R> + ?Sized,
         SS: StateStore<R, S> + ?Sized,
     >(

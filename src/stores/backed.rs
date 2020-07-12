@@ -13,7 +13,7 @@ use std::sync::Arc;
 pub struct BackedStore<R, S, ES: ?Sized>
 where
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
 {
     store: Arc<ES>,
     memory: MemoryEventStore<R, S>,
@@ -22,7 +22,7 @@ where
 impl<R, S, ES: ?Sized> Clone for BackedStore<R, S, ES>
 where
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
 {
     fn clone(&self) -> Self {
         BackedStore {
@@ -35,7 +35,7 @@ where
 impl<R, S, ES> BackedStore<R, S, ES>
 where
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
     ES: EventStore<R> + ?Sized,
 {
     pub fn new(store: Arc<ES>) -> BackedStore<R, S, ES> {
@@ -49,7 +49,7 @@ where
 impl<R, S, ES> EventStore<R> for BackedStore<R, S, ES>
 where
     R: RoomVersion,
-    S: RoomState,
+    S: RoomState<String>,
     ES: EventStore<R> + ?Sized,
 {
     fn insert_events(
