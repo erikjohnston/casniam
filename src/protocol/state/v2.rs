@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::protocol::{
     AuthRules, Event, RoomState, RoomStateResolver, RoomVersion,
 };
+use crate::state_map::StateMap;
 use crate::stores::EventStore;
 
 pub struct RoomStateResolverV2<R> {
@@ -51,6 +52,7 @@ where
             )
             .await?;
 
+            // FIXME: The unwrap_or_default here doesn't seem right.
             let power_level_id = resolved
                 .get("m.room.power_levels", "")
                 .map(|e| e as &str)
@@ -370,7 +372,7 @@ async fn iterative_auth_checks<
         );
 
         let auth_events = store.get_events(&event.auth_event_ids()).await?;
-        let mut auth_map = S::new();
+        let mut auth_map = StateMap::new();
         for e in auth_events {
             if let Some(state_key) = e.state_key() {
                 if types.contains(&(
@@ -380,7 +382,7 @@ async fn iterative_auth_checks<
                     auth_map.add_event(
                         e.event_type().to_string(),
                         state_key.to_string(),
-                        e.event_id().to_string(),
+                        e.clone(),
                     );
                 }
             }
@@ -388,11 +390,14 @@ async fn iterative_auth_checks<
 
         for (t, s) in types {
             if let Some(e) = new_state.get(t.as_str(), s.as_str()) {
-                auth_map.add_event(t.to_string(), s.to_string(), e.to_string());
+                let event = store.get_event(e).await?;
+                if let Some(event) = event {
+                    auth_map.add_event(t.to_string(), s.to_string(), event);
+                }
             }
         }
 
-        let result = R::Auth::check(event, &auth_map, store).await;
+        let result = R::Auth::check(event, &auth_map);
 
         if result.is_ok() {
             new_state.add_event(

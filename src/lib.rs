@@ -67,4 +67,8 @@ where
     fn keys(&self) -> Vec<(&str, &str)> {
         self.keys().collect()
     }
+
+    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a> {
+        Box::new(self.values())
+    }
 }

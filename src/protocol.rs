@@ -1,3 +1,4 @@
+use crate::state_map::StateMap;
 use crate::stores::backed::BackedStore;
 use crate::stores::{EventStore, StoreFactory};
 
@@ -117,16 +118,17 @@ pub trait RoomState<E>:
     ) -> Vec<E>;
 
     fn keys(&self) -> Vec<(&str, &str)>;
+
+    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a>;
 }
 
 pub trait AuthRules {
     type RoomVersion: RoomVersion;
 
-    fn check<S: RoomState<String>>(
+    fn check<S: RoomState<<Self::RoomVersion as RoomVersion>::Event>>(
         e: &<Self::RoomVersion as RoomVersion>::Event,
         s: &S,
-        store: &(impl EventStore<Self::RoomVersion> + Clone),
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>;
+    ) -> Result<(), Error>;
 
     fn auth_types_for_event(
         event_type: &str,
@@ -269,16 +271,13 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         let event_map: HashMap<&str, &R::Event> =
             auth_events.iter().map(|e| (e.event_id(), e)).collect();
 
-        let backed_store: BackedStore<R, S, _> =
-            BackedStore::new(event_store.clone());
-
         // We topological sort here to ensure that we handle events that are
         // referenced as auth events before subsequent events.
         topological_sort_by_func(&mut events, DagNode::auth_prev);
 
         let mut allowed_events = Vec::with_capacity(events.len());
         for event in events {
-            let auth_state: S = event
+            let auth_state: StateMap<R::Event> = event
                 .auth_event_ids()
                 .iter()
                 .filter_map(|aid| event_map.get(aid))
@@ -286,19 +285,13 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                     e.state_key().map(|state_key| {
                         (
                             (e.event_type().to_string(), state_key.to_string()),
-                            e.event_id().to_string(),
+                            (*e).clone(),
                         )
                     })
                 })
                 .collect();
 
-            let rejected = match R::Auth::check(
-                &event,
-                &auth_state,
-                &backed_store,
-            )
-            .await
-            {
+            let rejected = match R::Auth::check(&event, &auth_state) {
                 Ok(()) => {
                     info!("Allowed (by auth chain) {}", event.event_id());
                     false
@@ -314,7 +307,6 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             };
 
             if !rejected {
-                backed_store.insert_event(event.clone()).await?;
                 allowed_events.push(event);
             }
         }
@@ -497,23 +489,51 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             let state_before: S =
                 R::State::resolve_state(states, &store).await?;
 
+            // TODO: Only fetch events we need. The tests need fixing first though.
+            // let auth_event_ids: Vec<_> = R::Auth::auth_types_for_event(
+            //     event.event_type(),
+            //     event.state_key(),
+            //     event.sender(),
+            //     event.content(),
+            // )
+            // .into_iter()
+            // .filter_map(|(typ, state_key)| state_before.get(typ, state_key))
+            // .map(|e| e as &str)
+            // .collect();
+
+            let state_event_ids: Vec<_> =
+                state_before.values().map(|v| v as &str).collect();
+
+            let auth_events = store.get_events(&state_event_ids).await?;
+            let auth_state: StateMap<R::Event> = auth_events
+                .into_iter()
+                .filter_map(|e| {
+                    let state_key = if let Some(state_key) = event.state_key() {
+                        state_key.to_string()
+                    } else {
+                        return None;
+                    };
+
+                    Some(((e.event_type().to_string(), state_key), e))
+                })
+                .collect();
+
             // FIXME: Differentiate between DB and auth errors.
             // TODO: Need to pass previous events to auth check
-            let rejected =
-                match R::Auth::check(&event, &state_before, &store).await {
-                    Ok(()) => {
-                        info!("Allowed {}", event.event_id());
-                        false
-                    }
-                    Err(err) => {
-                        warn!(
-                            "Denied event {} because: {}",
-                            event.event_type(),
-                            err
-                        );
-                        true
-                    }
-                };
+            let rejected = match R::Auth::check(&event, &auth_state) {
+                Ok(()) => {
+                    info!("Allowed {}", event.event_id());
+                    false
+                }
+                Err(err) => {
+                    warn!(
+                        "Denied event {} because: {}",
+                        event.event_type(),
+                        err
+                    );
+                    true
+                }
+            };
 
             let mut state_after = state_before.clone();
             if !rejected {
@@ -886,12 +906,11 @@ mod tests {
     impl AuthRules for DummyAuth {
         type RoomVersion = DummyVersion;
 
-        fn check<S: RoomState<String>>(
+        fn check<S: RoomState<<Self::RoomVersion as RoomVersion>::Event>>(
             _e: &<Self::RoomVersion as RoomVersion>::Event,
             _s: &S,
-            _store: &(impl EventStore<Self::RoomVersion> + Clone),
-        ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
-            Box::pin(future::ok(()))
+        ) -> Result<(), Error> {
+            Ok(())
         }
 
         fn auth_types_for_event(

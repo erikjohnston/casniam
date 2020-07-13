@@ -1,18 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::marker::PhantomData;
-use std::pin::Pin;
 use std::str::FromStr;
 
 use failure::Error;
 
-use futures::Future;
 use serde_json::{self, Value};
 
 use crate::protocol::AuthRules;
 use crate::protocol::{Event, RoomState, RoomVersion};
 use crate::state_map::StateMap;
-use crate::stores::EventStore;
 
 pub fn get_domain_from_id(string: &str) -> Result<&str, Error> {
     string
@@ -32,12 +29,11 @@ where
 {
     type RoomVersion = R;
 
-    fn check<'a, S: RoomState<String>>(
+    fn check<'a, S: RoomState<R::Event>>(
         e: &'a R::Event,
         s: &'a S,
-        store: &'a (impl EventStore<Self::RoomVersion> + Clone),
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
-        Pin::from(Box::new(check(e.clone(), s.clone(), store.clone())))
+    ) -> Result<(), Error> {
+        check::<R, S>(e.clone(), s.clone())
     }
 
     fn auth_types_for_event(
@@ -51,43 +47,14 @@ where
 }
 
 /// Check if the given event parses auth.
-pub async fn check<R, S>(
-    event: R::Event,
-    state: S,
-    store: impl EventStore<R>,
-) -> Result<(), Error>
+pub fn check<R, S>(event: R::Event, auth_events: S) -> Result<(), Error>
 where
     R: RoomVersion,
-    S: RoomState<String> + Clone,
+    S: RoomState<R::Event>,
 {
-    let types = auth_types_for_event(
-        event.event_type(),
-        event.state_key(),
-        event.sender(),
-        event.content(),
-    );
-    let auth_event_ids = state.get_event_ids(types);
-
-    let auth_events_vec = store
-        .get_events(
-            &auth_event_ids.iter().map(|e| e as &str).collect::<Vec<_>>(),
-        )
-        .await?;
-
-    let auth_events = auth_events_vec
-        .into_iter()
-        .filter_map(|ev| {
-            if let Some(state_key) = ev.state_key() {
-                Some(((ev.event_type().to_string(), state_key.to_string()), ev))
-            } else {
-                None
-            }
-        })
-        .collect();
-
     Checker {
         event: &event,
-        auth_events,
+        auth_events: auth_events.into_iter().collect(),
     }
     .check()
 }
