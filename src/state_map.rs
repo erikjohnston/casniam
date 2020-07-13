@@ -266,7 +266,7 @@ where
             .chain(others)
     }
 
-    pub fn values<'a>(&'a self) -> impl Iterator<Item = &'a E> {
+    pub fn values(&self) -> impl Iterator<Item = &E> {
         let well_known = self.well_known.values();
 
         let members = self.membership.values();
