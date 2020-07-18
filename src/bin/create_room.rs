@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use failure::Error;
-use futures::future::BoxFuture;
+use failure::{format_err, Error};
+use futures::future::{BoxFuture, Ready};
 use futures::FutureExt;
 use log::{error, info};
 use percent_encoding::percent_decode_str;
@@ -16,13 +16,14 @@ use sha2::Digest;
 use sha2::Sha256;
 use sodiumoxide::crypto::sign;
 
+use actix_web::{dev::Payload, FromRequest, HttpRequest};
 use casniam::protocol::client::{
     HyperFederationClient, MemoryTransactionSender, TransactionSender,
 };
 use casniam::protocol::events::EventBuilder;
 use casniam::protocol::federation_api::{
-    basic::Hooks, basic::StandardFederationAPI, FederationAPI,
-    FederationResult, TransactionRequest,
+    basic::Hooks, basic::StandardFederationAPI, parse_auth_header,
+    FederationAPI, FederationResult, TransactionRequest,
 };
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
@@ -340,6 +341,8 @@ where
 
     async fn handle_chunk<R>(
         self,
+        origin: &str,
+        room_id: &str,
         chunk: DagChunkFragment<R::Event>,
     ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
     where
@@ -351,7 +354,9 @@ where
         let room_store = self.stores.get_room_store::<R>();
 
         let handler = self.federation_api.handler();
-        let stuff = handler.handle_chunk::<R>(chunk).await?;
+        let stuff = handler
+            .handle_new_timeline_events::<R>(origin, room_id, chunk.into_events())
+            .await?;
 
         for info in &stuff {
             assert!(!info.rejected);
@@ -467,16 +472,50 @@ where
         let chunk = self
             .clone()
             .generate_chunk::<R, _>(
-                room_id,
+                room_id.clone(),
                 builders
                     .into_iter()
                     .map(|j| EventBuilder::from_json(j).expect("valid json")),
             )
             .await?;
 
-        let stuff = self.clone().handle_chunk::<R>(chunk).await?;
+        let stuff = self
+            .clone()
+            .handle_chunk::<R>(&self.server_name, &room_id, chunk)
+            .await?;
 
         Ok(stuff)
+    }
+}
+
+struct Authenticate {
+    origin: String,
+}
+
+impl FromRequest for Authenticate {
+    type Config = ();
+    type Error = Error;
+    type Future = Ready<Result<Self, Error>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let res = req
+            .headers()
+            .get("Authorization")
+            .ok_or_else(|| format_err!("Missing Authorization header"))
+            .and_then(|auth_header| {
+                auth_header
+                    .to_str()
+                    .map_err(|_e| format_err!("Invalid Authorization header"))
+            })
+            .and_then(|header| {
+                parse_auth_header(header)
+                    .ok_or_else(|| format_err!("Invalid Authorization header"))
+            })
+            .map(|auth| Authenticate {
+                origin: auth.origin.to_string(),
+            });
+
+        futures::future::ready(res)
     }
 }
 
@@ -507,9 +546,10 @@ where
     .route(
         "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
         actix_web::web::get().to(
-            |(state, path): (
+            |(state, path, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
+                Authenticate,
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
@@ -534,7 +574,7 @@ where
                         serde_json::to_value(
                             app_data
                             .federation_api
-                            .on_make_join::<R>(room_id, user_id)
+                            .on_make_join::<R>(auth.origin, room_id, user_id)
                             .await
                             .unwrap()
                         ).unwrap() // FIXME
@@ -548,10 +588,11 @@ where
     .route(
         "/_matrix/federation/v2/send_join/{room_id}/{event_id}",
         actix_web::web::put().to(
-            |(state, path, body): (
+            |(state, path, body, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 actix_web::web::Json<serde_json::Value>,
+                Authenticate,
             )| {
                 async move {
                     let app_data: AppData<F> = state.as_ref().clone();
@@ -586,7 +627,7 @@ where
 
                             let response = app_data
                                 .federation_api
-                                .on_send_join::<R>(room_id.clone(), event)
+                                .on_send_join::<R>(auth.origin, room_id.clone(), event)
                                 .await
                                 .unwrap(); // FIXME
 
@@ -606,10 +647,11 @@ where
     .route(
         "/_matrix/federation/v1/send/{txn_id}",
         actix_web::web::put().to(
-            |(state, _path, body): (
+            |(state, _path, body, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String,)>,
                 actix_web::web::Json<serde_json::Value>,
+                Authenticate,
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
@@ -619,7 +661,7 @@ where
 
                     app_data
                         .federation_api
-                        .on_send(transaction)
+                        .on_send(auth.origin, transaction)
                         .await
                         .unwrap(); // FIXME
 
@@ -662,10 +704,11 @@ where
     ).route(
         "/_matrix/federation/v1/backfill/{room_id}",
         actix_web::web::get().to(
-            |(state, path, query): (
+            |(state, path, query, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String,)>,
                 actix_web::web::Query<Vec<(String, String)>>,
+                Authenticate,
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
@@ -698,7 +741,7 @@ where
                         {
                             let response = app_data
                                 .federation_api
-                                .on_backfill::<R>(room_id, event_ids, limit)
+                                .on_backfill::<R>(auth.origin, room_id, event_ids, limit)
                                 .await
                                 .unwrap(); // FIXME
 

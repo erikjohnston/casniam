@@ -69,6 +69,7 @@ where
 {
     fn on_make_join<R: RoomVersion>(
         &self,
+        _origin: String,
         room_id: String,
         user_id: String,
     ) -> BoxFuture<FederationResult<MakeJoinResponse<R::Event>>> {
@@ -123,7 +124,8 @@ where
 
     fn on_send_join<R: RoomVersion>(
         &self,
-        _room_id: String,
+        origin: String,
+        room_id: String,
         event: R::Event,
     ) -> BoxFuture<FederationResult<SendJoinResponse<R::Event>>> {
         let event_store = self.stores.get_event_store::<R>();
@@ -154,8 +156,14 @@ where
 
             let event_id = event.event_id().to_string();
 
-            let chunk = DagChunkFragment::from_event(event.clone());
-            let mut stuff = self.handler.handle_chunk::<R>(chunk).await?;
+            let mut stuff = self
+                .handler
+                .handle_new_timeline_events::<R>(
+                    &origin,
+                    &room_id,
+                    vec![event.clone()],
+                )
+                .await?;
 
             for info in &mut stuff {
                 assert!(!info.rejected);
@@ -169,8 +177,6 @@ where
                 state_store
                     .insert_state(&info.event, info.state_before.clone())
                     .await?;
-
-                event_store.insert_event(info.event.clone()).await?;
 
                 room_store.insert_new_event(info.event.clone()).await?;
             }
@@ -200,6 +206,7 @@ where
 
     fn on_backfill<R: RoomVersion>(
         &self,
+        _origin: String,
         _room_id: String,
         event_ids: Vec<String>,
         limit: usize,
@@ -216,6 +223,7 @@ where
 
     fn on_send(
         &self,
+        origin: String,
         txn: TransactionRequest,
     ) -> BoxFuture<FederationResult<TransactionResponse>> {
         // TODO: Check against origin.
@@ -248,12 +256,16 @@ where
             for (room_version_id, events) in version_to_event_map.into_iter() {
                 match room_version_id {
                     RoomVersion3::VERSION => {
-                        self.handle_incoming_events::<RoomVersion3>(events)
-                            .await?
+                        self.handle_incoming_events::<RoomVersion3>(
+                            &origin, events,
+                        )
+                        .await?
                     }
                     RoomVersion4::VERSION => {
-                        self.handle_incoming_events::<RoomVersion4>(events)
-                            .await?
+                        self.handle_incoming_events::<RoomVersion4>(
+                            &origin, events,
+                        )
+                        .await?
                     }
                     r => info!("Unrecognized room version: {}", r),
                 }
@@ -290,6 +302,7 @@ where
 
     async fn handle_incoming_events<R: RoomVersion>(
         &self,
+        origin: &str,
         raw_events: Vec<Value>,
     ) -> FederationResult<()> {
         let mut events = Vec::new();
@@ -303,7 +316,7 @@ where
         }
 
         let room_store = self.stores.get_room_store::<R>();
-        let event_store = self.stores.get_event_store::<R>();
+        let _event_store = self.stores.get_event_store::<R>();
         let state_store = self.stores.get_state_store::<R>();
 
         let chunks = DagChunkFragment::from_events(events);
@@ -321,19 +334,20 @@ where
                 continue;
             }
 
-            let stuff = self.handler.handle_chunk::<R>(chunk.clone()).await?;
+            let stuff = self
+                .handler
+                .handle_new_timeline_events::<R>(
+                    origin,
+                    &room_id,
+                    chunk.into_events(),
+                )
+                .await?;
 
             for info in &stuff {
                 state_store
                     .insert_state(&info.event, info.state_before.clone())
                     .await?;
             }
-
-            event_store
-                .insert_events(
-                    stuff.iter().map(|info| info.event.clone()).collect(),
-                )
-                .await?;
 
             room_store
                 .insert_new_events(

@@ -214,9 +214,35 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         }
     }
 
+    pub async fn handle_new_timeline_events<R: RoomVersion>(
+        &self,
+        origin: &str,
+        room_id: &str,
+        events: Vec<R::Event>,
+    ) -> Result<Vec<PersistEventInfo<R, S>>, Error> {
+        self.check_signatures_and_hashes::<R>(&events).await?;
+
+        let allowed_events = self
+            .check_auth_auth_chain_and_persist::<R>(origin, room_id, events)
+            .await?;
+
+        let chunks = DagChunkFragment::from_events(allowed_events);
+
+        let mut persist_infos = Vec::new();
+        for chunk in chunks {
+            let (chunk, states) =
+                self.check_for_missing::<R>(origin, room_id, chunk).await?;
+
+            let mut persist_info = self.handle_chunk(chunk, states).await?;
+            persist_infos.append(&mut persist_info);
+        }
+
+        Ok(persist_infos)
+    }
+
     pub async fn check_signatures_and_hashes<R: RoomVersion>(
         &self,
-        _events: Vec<R::Event>,
+        _events: &[R::Event],
     ) -> Result<(), Error> {
         // TODO:
         Ok(())
@@ -224,7 +250,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
     /// Check that the given events pass auth based on their auth events. Also fetches any missing
     /// auth events.
-    pub async fn check_auth_auth_chain<R: RoomVersion>(
+    pub async fn check_auth_auth_chain_and_persist<R: RoomVersion>(
         &self,
         origin: &str,
         room_id: &str,
@@ -235,11 +261,14 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         // Fetch missing auth events.
         while let Some(missing_events) = {
-            let missing_events = event_store
-                .missing_events(
-                    &events.iter().map(|e| e.event_id()).collect::<Vec<_>>(),
-                )
-                .await?;
+            let extremities: Vec<_> = events
+                .iter()
+                .flat_map(|e| e.auth_event_ids())
+                .filter(|e| events.iter().any(|ev| ev.event_id() == *e))
+                .collect();
+
+            let missing_events =
+                event_store.missing_events(&extremities).await?;
 
             if !missing_events.is_empty() {
                 Some(missing_events)
@@ -273,7 +302,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         // We topological sort here to ensure that we handle events that are
         // referenced as auth events before subsequent events.
-        topological_sort_by_func(&mut events, DagNode::auth_prev);
+        // topological_sort_by_func(&mut events, DagNode::auth_prev);
 
         let mut allowed_events = Vec::with_capacity(events.len());
         for event in events {
@@ -307,7 +336,11 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             };
 
             if !rejected {
+                event_store.insert_event(event.clone()).await?;
                 allowed_events.push(event);
+            } else {
+                // TODO: What should we do here?
+                todo!();
             }
         }
 
@@ -316,17 +349,15 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
     /// Gets any missing events and returns a map of state for any new backwards
     /// extremities.
+    ///
+    /// Returns the updated chunk and a map of the state after any missing
+    /// events that are referenced.
     pub async fn check_for_missing<R: RoomVersion>(
         &self,
         origin: &str,
+        room_id: &str,
         mut chunk: DagChunkFragment<R::Event>,
-    ) -> Result<
-        (
-            DagChunkFragment<R::Event>,
-            HashMap<String, client::GetStateIdsResponse>,
-        ),
-        Error,
-    > {
+    ) -> Result<(DagChunkFragment<R::Event>, HashMap<String, S>), Error> {
         let stores = self.stores.clone();
         let event_store = stores.get_event_store::<R>();
 
@@ -381,10 +412,21 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         topological_sort(&mut missing_events);
 
+        // We need filter out invalid events now before we fetch the state.
+        let missing_events = self
+            .check_auth_auth_chain_and_persist::<R>(
+                origin,
+                room_id,
+                missing_events,
+            )
+            .await?;
+
         for event in missing_events.into_iter().rev() {
-            // TODO: We should probably not just throw away events that don't
-            // fit
-            chunk.add_event(event).ok();
+            if let Err(_event) = chunk.add_event(event) {
+                // TODO: We should probably not just throw away events that don't
+                // fit
+                todo!()
+            }
         }
 
         let unknown_events = event_store
@@ -399,17 +441,31 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let mut state_map = HashMap::new();
         if !unknown_events.is_empty() {
-            let mut new_events = Vec::new();
-
             for event_id in unknown_events {
+                let mut new_events = Vec::new();
+
+                match client.get_event::<R>(origin, &room, &event_id).await {
+                    Ok(event) => new_events.push(event),
+                    Err(e) => {
+                        info!(
+                            "Failed to get missing prev event, bailing: {}",
+                            e
+                        );
+                        bail!(
+                            "Failed to get missing prev event, bailing: {}",
+                            e
+                        );
+                    }
+                };
+
                 // TODO: Handle these calls failing.
-                let state =
+                let state_response =
                     client.get_state_ids(origin, &room, &event_id).await?;
 
-                let state_ids: Vec<&str> = state
+                let state_ids: Vec<&str> = state_response
                     .auth_chain_ids
                     .iter()
-                    .chain(state.pdu_ids.iter())
+                    .chain(state_response.pdu_ids.iter())
                     .map(|e| e as &str)
                     .collect();
 
@@ -417,23 +473,68 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                     event_store.missing_events(&state_ids).await?;
 
                 // Fetch missing events.
-                for event_id in missing_events {
-                    let event =
-                        client.get_event::<R>(origin, &room, &event_id).await?;
+                for state_event_id in missing_events {
+                    match client
+                        .get_event::<R>(origin, &room, &state_event_id)
+                        .await
+                    {
+                        Ok(event) => new_events.push(event),
+                        Err(e) => {
+                            info!("Failed to get missing event in state, bailing: {}", e);
+                            bail!("Failed to get missing event in state, bailing: {}", e);
+                        }
+                    };
+                }
 
-                    new_events.push(event);
+                // We sort these so that if there are any dependencies we handle
+                // them in the correct order.
+                topological_sort_by_func(&mut new_events, DagNode::auth_prev);
+                self.check_auth_auth_chain_and_persist::<R>(
+                    origin, room_id, new_events,
+                )
+                .await?;
+
+                // Figure out a way to not load all state events here.
+                let new_event = event_store
+                    .get_event(&event_id)
+                    .await?
+                    .ok_or_else(|| format_err!("State does not pass auth"))?;
+
+                let state_events = event_store.get_events(&state_ids).await?;
+                if state_events.len() != state_ids.len() {
+                    bail!("State does not pass auth");
+                }
+
+                let mut state: S = state_events
+                    .into_iter()
+                    .filter_map(|e| {
+                        let state_key = if let Some(state_key) = e.state_key() {
+                            state_key.to_string()
+                        } else {
+                            return None;
+                        };
+
+                        Some((
+                            (e.event_type().to_string(), state_key),
+                            e.event_id().to_string(),
+                        ))
+                    })
+                    .collect();
+
+                if let Some(state_key) = new_event.state_key() {
+                    state.add_event(
+                        new_event.event_type().to_string(),
+                        state_key.to_string(),
+                        new_event.event_id().to_string(),
+                    );
                 }
 
                 state_map.insert(event_id, state);
             }
-
-            // We sort these so that if there are any dependencies we handle
-            // them in the correct order.
-            topological_sort_by_func(&mut new_events, DagNode::auth_prev);
-
-            // TODO: Handle new_events
-            assert!(new_events.is_empty());
         }
+
+        // TODO: We need to check that any new state gets state res'd in to the
+        // current state (to avoid the security hole).
 
         Ok((chunk, state_map))
     }
@@ -441,6 +542,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
     pub async fn handle_chunk<R: RoomVersion>(
         &self,
         chunk: DagChunkFragment<R::Event>,
+        mut event_to_state_after: HashMap<String, S>,
     ) -> Result<Vec<PersistEventInfo<R, S>>, Error> {
         // TODO: This doesn't check signatures/hashes or whether it passes auth
         // checks based on auth events. Nor does it check for soft failures.
@@ -454,6 +556,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         let missing = &chunk.backward_extremities;
 
         if !missing.is_empty() {
+            // TODO: need to check we have state for this
             let unknown_events = event_store
                 .missing_events(
                     &missing.iter().map(|e| e as &str).collect::<Vec<_>>(),
@@ -464,8 +567,6 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 bail!("Unknown events: {:?}", unknown_events);
             }
         }
-
-        let mut event_to_state_after: HashMap<String, S> = HashMap::new();
 
         for event_id in missing {
             let state = state_store.get_state_after(&[&event_id]).await?;
@@ -508,7 +609,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             let auth_state: StateMap<R::Event> = auth_events
                 .into_iter()
                 .filter_map(|e| {
-                    let state_key = if let Some(state_key) = event.state_key() {
+                    let state_key = if let Some(state_key) = e.state_key() {
                         state_key.to_string()
                     } else {
                         return None;
@@ -518,8 +619,6 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 })
                 .collect();
 
-            // FIXME: Differentiate between DB and auth errors.
-            // TODO: Need to pass previous events to auth check
             let rejected = match R::Auth::check(&event, &auth_state) {
                 Ok(()) => {
                     info!("Allowed {}", event.event_id());
@@ -592,6 +691,10 @@ where
             backward_extremities: HashSet::new(),
             forward_extremities: HashSet::new(),
         }
+    }
+
+    pub fn into_events(self) -> Vec<E> {
+        self.events
     }
 
     pub fn from_events(mut events: Vec<E>) -> Vec<DagChunkFragment<E>> {
@@ -717,6 +820,7 @@ where
             }
         }
 
+        // TODO: Handle disconnected components.
         let reverse = petgraph::visit::Reversed(&graph);
         let walker = petgraph::visit::Topo::new(&reverse);
 
@@ -788,7 +892,7 @@ mod tests {
         }
 
         fn auth_event_ids(&self) -> Vec<&str> {
-            unimplemented!()
+            vec![]
         }
 
         fn origin_server_ts(&self) -> u64 {
@@ -967,9 +1071,8 @@ mod tests {
             },
         ];
 
-        let mut chunks = DagChunkFragment::from_events(events);
-
-        let fut = handler.handle_chunk::<DummyVersion>(chunks.pop().unwrap());
+        let fut = handler
+            .handle_new_timeline_events::<DummyVersion>("foo", "bar", events);
 
         let results = block_on(fut).unwrap();
 

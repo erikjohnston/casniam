@@ -129,7 +129,7 @@ impl Event for SignedEventV3 {
     }
 
     fn redacts(&self) -> Option<&str> {
-        unimplemented!() // FIXME
+        todo!() // FIXME
     }
 
     fn room_id(&self) -> &str {
