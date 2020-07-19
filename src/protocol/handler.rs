@@ -682,6 +682,11 @@ mod tests {
 
     use futures::executor::block_on;
     use futures::future;
+    use futures::future::BoxFuture;
+    use futures::Future;
+    use serde_json::Value;
+    use sodiumoxide::crypto::sign;
+    use std::pin::Pin;
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
     struct TestEvent {
