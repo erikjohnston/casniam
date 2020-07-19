@@ -355,7 +355,11 @@ where
 
         let handler = self.federation_api.handler();
         let stuff = handler
-            .handle_new_timeline_events::<R>(origin, room_id, chunk.into_events())
+            .handle_new_timeline_events::<R>(
+                origin,
+                room_id,
+                chunk.into_events(),
+            )
             .await?;
 
         for info in &stuff {
