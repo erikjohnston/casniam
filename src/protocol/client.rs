@@ -1,11 +1,14 @@
 use failure::Error;
 use futures::future::BoxFuture;
-use futures::FutureExt;
+use futures::{Future, FutureExt, TryFutureExt};
+use hyper::client::connect::Connect;
+use hyper::{Body, Request, Response};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
 use serde_json::json;
 
 use std::fmt::Display;
+use std::{pin::Pin, sync::Arc};
 
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
@@ -15,23 +18,53 @@ fn enc<'a>(s: &'a str) -> impl Display + 'a {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
 }
 
+pub trait Requester: Send + Sync {
+    fn request(
+        &self,
+        request: Request<hyper::Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>;
+}
+
+impl<C> Requester for hyper::Client<C>
+where
+    C: Connect + Clone + Send + Sync + 'static,
+{
+    fn request(
+        &self,
+        request: Request<hyper::Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
+    {
+        hyper::Client::request(self, request).err_into().boxed()
+    }
+}
+
+impl Requester for () {
+    fn request(
+        &self,
+        _request: Request<hyper::Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
+    {
+        futures::future::err(format_err!("HTTP client disabled")).boxed()
+    }
+}
+
 #[derive(Clone)]
 pub struct HyperFederationClient {
-    client: hyper::Client<MatrixConnector>,
+    client: Arc<dyn Requester>,
     server_name: String,
     key_name: String,
     secret_key: sodiumoxide::crypto::sign::SecretKey,
 }
 
 impl HyperFederationClient {
-    pub fn new(
-        client: hyper::Client<MatrixConnector>,
+    pub fn new<C: Requester + 'static>(
+        client: C,
         server_name: String,
         key_name: String,
         secret_key: sodiumoxide::crypto::sign::SecretKey,
     ) -> HyperFederationClient {
         HyperFederationClient {
-            client,
+            client: Arc::new(client),
             server_name,
             key_name,
             secret_key,

@@ -21,7 +21,7 @@ use std::net::IpAddr;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{
-    io::{Cursor},
+    io::Cursor,
     sync::{Arc, Mutex},
     task::{self, Poll},
 };

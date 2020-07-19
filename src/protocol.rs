@@ -168,20 +168,6 @@ impl RoomVersion for RoomVersion4 {
     const VERSION: &'static str = "4";
 }
 
-pub trait FederationClient {
-    fn get_missing_events<E: Event>(
-        &self,
-        forward: Vec<String>,
-        back: Vec<String>,
-        limit: usize,
-    ) -> BoxFuture<Result<Vec<E>, Error>>;
-
-    fn get_state_at<S: RoomState<String>>(
-        &self,
-        event_id: &str,
-    ) -> BoxFuture<Result<S, Error>>;
-}
-
 pub trait FederationTransactionQueue {
     fn queue_events<V: RoomVersion>(
         &self,
@@ -193,23 +179,15 @@ pub trait FederationTransactionQueue {
 #[derive(Clone)]
 pub struct Handler<S: RoomState<String>, F> {
     stores: F,
-    client: Option<client::HyperFederationClient>,
-    _data: PhantomData<S>, // client: Box<FederationClient>,
+    client: client::HyperFederationClient,
+    _data: PhantomData<S>,
 }
 
 impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
     pub fn new(stores: F, client: client::HyperFederationClient) -> Self {
         Handler {
             stores,
-            client: Some(client),
-            _data: PhantomData,
-        }
-    }
-
-    pub fn no_http(stores: F) -> Self {
-        Handler {
-            stores,
-            client: None,
+            client,
             _data: PhantomData,
         }
     }
@@ -276,15 +254,12 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 None
             }
         } {
-            let client = self
-                .client
-                .as_ref()
-                .ok_or_else(|| format_err!("No http mode"))?;
-
             // Fetch missing events.
             for event_id in missing_events {
-                let event =
-                    client.get_event::<R>(origin, room_id, &event_id).await?;
+                let event = self
+                    .client
+                    .get_event::<R>(origin, room_id, &event_id)
+                    .await?;
 
                 events.push(event);
             }
@@ -383,11 +358,6 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let room = chunk.events[0].room_id().to_string();
 
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| format_err!("No http mode"))?;
-
         let room_store = stores.get_room_store::<R>();
 
         let set = room_store.get_forward_extremities(room.to_string()).await?;
@@ -401,7 +371,8 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             .map(|s| s as &str)
             .collect();
 
-        let mut missing_events = client
+        let mut missing_events = self
+            .client
             .get_missing_events::<R>(
                 origin,
                 &room,
@@ -444,7 +415,8 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             for event_id in unknown_events {
                 let mut new_events = Vec::new();
 
-                match client.get_event::<R>(origin, &room, &event_id).await {
+                match self.client.get_event::<R>(origin, &room, &event_id).await
+                {
                     Ok(event) => new_events.push(event),
                     Err(e) => {
                         info!(
@@ -460,7 +432,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
                 // TODO: Handle these calls failing.
                 let state_response =
-                    client.get_state_ids(origin, &room, &event_id).await?;
+                    self.client.get_state_ids(origin, &room, &event_id).await?;
 
                 let state_ids: Vec<&str> = state_response
                     .auth_chain_ids
@@ -474,7 +446,8 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
                 // Fetch missing events.
                 for state_event_id in missing_events {
-                    match client
+                    match self
+                        .client
                         .get_event::<R>(origin, &room, &state_event_id)
                         .await
                     {
@@ -839,6 +812,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::client::HyperFederationClient;
     use crate::state_map::StateMap;
     use crate::stores::memory;
 
@@ -1040,8 +1014,17 @@ mod tests {
 
     #[test]
     fn test_handle() {
-        let handler = Handler::<StateMap<String>, _>::no_http(
+        let (_pubkey, secret_key) = sign::gen_keypair();
+        let client = HyperFederationClient::new(
+            (),
+            String::new(),
+            String::new(),
+            secret_key,
+        );
+
+        let handler = Handler::<StateMap<String>, _>::new(
             memory::MemoryStoreFactory::new(),
+            client,
         );
 
         let events = vec![
