@@ -2,9 +2,9 @@ use failure::Error;
 use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use http::Uri;
-
 use hyper::client::connect::Connection;
-use hyper::client::connect::HttpConnector;
+use hyper::client::connect::{Connected, HttpConnector};
+use hyper::server::conn::Http;
 use hyper::service::Service;
 use hyper::Client;
 use hyper_tls::HttpsConnector;
@@ -20,7 +20,11 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::task::{self, Poll};
+use std::{
+    io::{Cursor},
+    sync::{Arc, Mutex},
+    task::{self, Poll},
+};
 
 pub struct Endpoint {
     pub host: String,
@@ -250,4 +254,163 @@ async fn try_connecting(
     let tls = connector.connect(&endpoint.tls_name, tcp).await?;
 
     Ok(tls.into())
+}
+
+/// A connector that reutrns a connection which returns 200 OK to all connections.
+#[derive(Clone)]
+pub struct TestConnector;
+
+impl Service<Uri> for TestConnector {
+    type Response = TestConnection;
+    type Error = Error;
+    type Future = Pin<
+        Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        _: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        // This connector is always ready, but others might not be.
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _dst: Uri) -> Self::Future {
+        let (client, server) = TestConnection::double_ended();
+
+        {
+            let service = hyper::service::service_fn(|_| async move {
+                Ok(hyper::Response::new(hyper::Body::from("Hello World")))
+                    as Result<_, hyper::http::Error>
+            });
+            let fut = Http::new().serve_connection(server, service);
+            tokio::spawn(fut);
+        }
+
+        futures::future::ok(client).boxed()
+    }
+}
+
+#[derive(Default)]
+struct TestConnectionInner {
+    outbound_buffer: Cursor<Vec<u8>>,
+    inbound_buffer: Cursor<Vec<u8>>,
+    wakers: Vec<futures::task::Waker>,
+}
+
+/// A in memory connection for use with tests.
+#[derive(Clone, Default)]
+pub struct TestConnection {
+    inner: Arc<Mutex<TestConnectionInner>>,
+    direction: bool,
+}
+
+impl TestConnection {
+    pub fn double_ended() -> (TestConnection, TestConnection) {
+        let inner: Arc<Mutex<TestConnectionInner>> = Arc::default();
+
+        let a = TestConnection {
+            inner: inner.clone(),
+            direction: false,
+        };
+
+        let b = TestConnection {
+            inner,
+            direction: true,
+        };
+
+        (a, b)
+    }
+}
+
+impl AsyncRead for TestConnection {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut conn = self.inner.lock().expect("mutex");
+
+        let buffer = if self.direction {
+            &mut conn.inbound_buffer
+        } else {
+            &mut conn.outbound_buffer
+        };
+
+        let bytes_read = std::io::Read::read(buffer, buf)?;
+        if bytes_read > 0 {
+            Poll::Ready(Ok(bytes_read))
+        } else {
+            conn.wakers.push(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+impl AsyncWrite for TestConnection {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let mut conn = self.inner.lock().expect("mutex");
+
+        if self.direction {
+            conn.outbound_buffer.get_mut().extend_from_slice(buf);
+        } else {
+            conn.inbound_buffer.get_mut().extend_from_slice(buf);
+        }
+
+        for waker in conn.wakers.drain(..) {
+            waker.wake()
+        }
+
+        Poll::Ready(Ok(buf.len()))
+    }
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        let mut conn = self.inner.lock().expect("mutex");
+
+        if self.direction {
+            Pin::new(&mut conn.outbound_buffer).poll_flush(cx)
+        } else {
+            Pin::new(&mut conn.inbound_buffer).poll_flush(cx)
+        }
+    }
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        let mut conn = self.inner.lock().expect("mutex");
+
+        if self.direction {
+            Pin::new(&mut conn.outbound_buffer).poll_shutdown(cx)
+        } else {
+            Pin::new(&mut conn.inbound_buffer).poll_shutdown(cx)
+        }
+    }
+}
+
+impl Connection for TestConnection {
+    fn connected(&self) -> Connected {
+        Connected::new()
+    }
+}
+
+#[tokio::test]
+async fn test_memory_connection() {
+    let client: hyper::Client<_, hyper::Body> =
+        hyper::Client::builder().build(TestConnector);
+
+    let response = client
+        .get("http://localhost".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert!(response.status().is_success());
+
+    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    assert_eq!(&bytes[..], b"Hello World");
 }
