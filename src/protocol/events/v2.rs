@@ -362,6 +362,21 @@ pub fn redact<E: serde::de::DeserializeOwned>(
     serde_json::from_value(serde_json::Value::Object(val))
 }
 
+pub fn add_content_hash(
+    event_json: &mut serde_json::Value,
+) -> Result<(), Error> {
+    let serialized =
+        serialize_canonically_remove_fields(event_json.clone(), &["hashes"])?;
+
+    let computed_hash = Sha256::digest(&serialized);
+
+    event_json["hashes"] = json!({
+        "sha256": base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD)
+    });
+
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum EventHash {
     #[serde(rename = "sha256")]

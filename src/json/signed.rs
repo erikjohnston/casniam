@@ -85,15 +85,29 @@ where
 
         let map = value.as_object_mut().unwrap();
 
-        let raw_sigs = map.remove("signatures").unwrap_or_default();
-        let raw_unsigned = map.remove("unsigned").unwrap_or_default();
+        // TODO: Better error messages when this fails.
+        let raw_sigs = map
+            .remove("signatures")
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        let raw_unsigned = map
+            .remove("unsigned")
+            .unwrap_or_else(|| Value::Object(Default::default()));
 
         let signatures: BTreeMap<String, BTreeMap<String, Base64Signature>> =
-            serde_json::from_value(raw_sigs)
-                .map_err(serde::de::Error::custom)?;
+            serde_json::from_value(raw_sigs).map_err(|err| {
+                serde::de::Error::custom(format!(
+                    "Failed to parse signature field: {}",
+                    err
+                ))
+            })?;
 
-        let unsigned: U = serde_json::from_value(raw_unsigned)
-            .map_err(serde::de::Error::custom)?;
+        let unsigned: U =
+            serde_json::from_value(raw_unsigned).map_err(|err| {
+                serde::de::Error::custom(format!(
+                    "Failed to parse unsigned field: {}",
+                    err
+                ))
+            })?;
 
         let canonical =
             serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -125,7 +139,8 @@ where
             .unwrap()
             .insert("signatures".to_string(), s);
 
-        if !u.is_null() {
+        if !u.is_null() && u.as_object().map(|m| !m.is_empty()).unwrap_or(true)
+        {
             v.as_object_mut().unwrap().insert("unsigned".to_string(), u);
         }
 
@@ -254,7 +269,7 @@ mod tests {
     #[test]
     fn signed_roundtrip() {
         let s: Signed<B> = serde_json::from_str(
-            r#"{ "a": 1, "signatures": {}, "unsigned": {} }"#,
+            r#"{ "a": 1, "signatures": {}, "unsigned": {"test": 1} }"#,
         )
         .unwrap();
 
@@ -263,7 +278,7 @@ mod tests {
         assert_eq!(s.value.get_canonical(), r#"{"a":1}"#);
 
         let j = serde_json::to_string(&s).unwrap();
-        assert_eq!(j, r#"{"a":1,"signatures":{},"unsigned":{}}"#);
+        assert_eq!(j, r#"{"a":1,"signatures":{},"unsigned":{"test":1}}"#);
     }
 
     #[test]

@@ -82,7 +82,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             let extremities: Vec<_> = events
                 .iter()
                 .flat_map(|e| e.auth_event_ids())
-                .filter(|e| events.iter().any(|ev| ev.event_id() == *e))
+                .filter(|e| !events.iter().any(|ev| ev.event_id() == *e))
                 .collect();
 
             let missing_events =
@@ -105,22 +105,20 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             }
         }
 
-        let auth_event_ids: Vec<&str> = events
-            .iter()
-            .flat_map(|event| event.auth_event_ids())
-            .collect();
-
-        let auth_events = event_store.get_events(&auth_event_ids).await?;
-
-        let event_map: HashMap<&str, &R::Event> =
-            auth_events.iter().map(|e| (e.event_id(), e)).collect();
-
         // We topological sort here to ensure that we handle events that are
         // referenced as auth events before subsequent events.
         // topological_sort_by_func(&mut events, DagNode::auth_prev);
 
         let mut allowed_events = Vec::with_capacity(events.len());
         for event in events {
+            // TODO: This will probably pull the same events out the DB each
+            // loop, unless we've added some the previous iteration.
+
+            let auth_events =
+                event_store.get_events(&event.auth_event_ids()).await?;
+            let event_map: HashMap<&str, &R::Event> =
+                auth_events.iter().map(|e| (e.event_id(), e)).collect();
+
             let auth_state: StateMap<R::Event> = event
                 .auth_event_ids()
                 .iter()
