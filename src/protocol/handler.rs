@@ -393,6 +393,10 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         }
 
         for event_id in missing {
+            if event_to_state_after.contains_key(event_id) {
+                continue;
+            }
+
             let state = state_store.get_state_after(&[&event_id]).await?;
             let state = expect_or_err!(state);
 

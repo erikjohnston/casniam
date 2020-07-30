@@ -15,7 +15,7 @@ use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
 use crate::protocol::{Event, RoomVersion};
 
-fn enc<'a>(s: &'a str) -> impl Display + 'a {
+pub fn enc<'a>(s: &'a str) -> impl Display + 'a {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
 }
 
@@ -215,7 +215,7 @@ impl HyperFederationClient {
         event_id: &str,
     ) -> Result<GetStateIdsResponse, Error> {
         let path = format!(
-            "/_matrix/federation/v1/send/{}?event_id={}",
+            "/_matrix/federation/v1/state_ids/{}?event_id={}",
             enc(room_id),
             enc(event_id)
         );
@@ -383,5 +383,5 @@ pub struct GetStateIdsResponse {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction<R: RoomVersion> {
-    pdus: Vec<R::Event>,
+    pub pdus: Vec<R::Event>,
 }
