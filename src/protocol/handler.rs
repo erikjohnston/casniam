@@ -221,6 +221,14 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         topological_sort(&mut missing_events);
 
+        info!(
+            "Received events from missing events {:?}",
+            missing_events
+                .iter()
+                .map(|e| e.event_id().to_string())
+                .collect::<Vec<_>>()
+        );
+
         // We need filter out invalid events now before we fetch the state.
         let missing_events = self
             .check_auth_auth_chain_and_persist::<R>(
@@ -250,6 +258,11 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let mut state_map = HashMap::new();
         if !unknown_events.is_empty() {
+            info!(
+                "Unknown events after fetching missing {:?}",
+                unknown_events.iter().collect::<Vec<_>>()
+            );
+
             for event_id in unknown_events {
                 let mut new_events = Vec::new();
 
@@ -456,9 +469,9 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 }
             }
 
-            // state_store
-            //     .insert_state(event.event_id(), state_before.clone())
-            //     .await?;
+            state_store
+                .insert_state(&event, state_before.clone())
+                .await?;
 
             store.insert_event(event.clone()).await?;
 
@@ -594,12 +607,17 @@ where
                 }
             }
 
+            self.backward_extremities.remove(event.id());
+
             if !chunk_references_event {
                 self.forward_extremities.insert(event.id().to_string());
             }
 
             self.event_ids.insert(event.id().to_string());
             self.events.push(event);
+
+            topological_sort(&mut self.events);
+
             return Ok(());
         }
 

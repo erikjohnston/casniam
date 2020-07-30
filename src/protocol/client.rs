@@ -3,6 +3,7 @@ use futures::future::BoxFuture;
 use futures::{Future, FutureExt, TryFutureExt};
 use hyper::client::connect::Connect;
 use hyper::{Body, Request, Response};
+use mockall::automock;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
 use serde_json::json;
@@ -18,6 +19,7 @@ fn enc<'a>(s: &'a str) -> impl Display + 'a {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
 }
 
+#[automock]
 pub trait Requester: Send + Sync {
     fn request(
         &self,
@@ -48,6 +50,19 @@ impl Requester for () {
     }
 }
 
+impl<R> Requester for &R
+where
+    R: Requester,
+{
+    fn request(
+        &self,
+        _request: Request<hyper::Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
+    {
+        futures::future::err(format_err!("HTTP client disabled")).boxed()
+    }
+}
+
 #[derive(Clone)]
 pub struct HyperFederationClient {
     client: Arc<dyn Requester>,
@@ -65,6 +80,20 @@ impl HyperFederationClient {
     ) -> HyperFederationClient {
         HyperFederationClient {
             client: Arc::new(client),
+            server_name,
+            key_name,
+            secret_key,
+        }
+    }
+
+    pub fn with_arc_requester<C: Requester + 'static>(
+        client: Arc<C>,
+        server_name: String,
+        key_name: String,
+        secret_key: sodiumoxide::crypto::sign::SecretKey,
+    ) -> HyperFederationClient {
+        HyperFederationClient {
+            client,
             server_name,
             key_name,
             secret_key,
@@ -341,18 +370,18 @@ struct RequestJson<'a, T> {
     content: Option<T>,
 }
 
-#[derive(Deserialize)]
-struct GetMissingEventsResponse<E> {
-    events: Vec<E>,
+#[derive(Serialize, Deserialize)]
+pub struct GetMissingEventsResponse<E> {
+    pub events: Vec<E>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GetStateIdsResponse {
     pub auth_chain_ids: Vec<String>,
     pub pdu_ids: Vec<String>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction<R: RoomVersion> {
     pdus: Vec<R::Event>,
 }
