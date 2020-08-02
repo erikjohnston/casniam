@@ -40,7 +40,6 @@ mockall = "0.7.1"
 version = "0.2.21"
 features = ["net", "rt-threaded", "macros", "rt-util"]
 
-
 [dependencies.indolentjson]
 git = "https://github.com/NegativeMjark/indolentjson-rust.git"
 
@@ -59,5 +58,5 @@ version = "0.3.5"
 features = ["compat"]
 
 
-#[replace."cookie:0.11.0"]
-#git = "https://github.com/alexcrichton/cookie-rs.git"
+[profile.bench]
+debug = true
