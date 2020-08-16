@@ -271,6 +271,7 @@ async fn fetch_missing() {
         .expect_request()
         .withf(|request| {
             request.uri().host() == Some("test")
+                && request.method() == "POST"
                 && request
                     .uri()
                     .path()
@@ -451,6 +452,7 @@ async fn fetch_handle_gap() {
         .expect_request()
         .withf(|request| {
             request.uri().host() == Some("test")
+                && request.method() == "POST"
                 && request
                     .uri()
                     .path()
@@ -484,6 +486,7 @@ async fn fetch_handle_gap() {
         .expect_request()
         .withf(|request| {
             request.uri().host() == Some("test")
+                && request.method() == "GET"
                 && request
                     .uri()
                     .path()
@@ -506,6 +509,7 @@ async fn fetch_handle_gap() {
         .expect_request()
         .withf(move |request| {
             request.uri().host() == Some("test")
+                && request.method() == "GET"
                 && request.uri().path().starts_with(&format!(
                     "/_matrix/federation/v1/event/{}",
                     enc(&message_1_event_id)

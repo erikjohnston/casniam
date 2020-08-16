@@ -117,7 +117,7 @@ impl HyperFederationClient {
             .path_and_query(&path as &str)
             .build()?;
 
-        let request = hyper::Request::put(uri)
+        let request = hyper::Request::get(uri)
             .header("Authorization", auth_header)
             .header("Content-Type", "application/json")
             .body(hyper::Body::empty())?;
@@ -182,7 +182,7 @@ impl HyperFederationClient {
             .path_and_query(&path as &str)
             .build()?;
 
-        let request = hyper::Request::put(uri)
+        let request = hyper::Request::post(uri)
             .header("Authorization", auth_header)
             .header("Content-Type", "application/json")
             .body(serde_json::to_vec(&content)?.into())?;
