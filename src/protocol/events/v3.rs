@@ -6,9 +6,11 @@ use crate::protocol::{AuthRules, Event, RoomState, RoomVersion};
 use failure::Error;
 
 use futures::{Future, FutureExt};
+use log::trace;
 use serde::de::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 use sodiumoxide::crypto::sign;
+
 use std::cmp::max;
 use std::pin::Pin;
 
@@ -166,6 +168,11 @@ impl Event for SignedEventV3 {
             &["signatures", "unsigned"],
         )
         .expect("EventV3 should always serialize.");
+
+        trace!(
+            "Signing: {}",
+            std::str::from_utf8(&bytes).unwrap_or("<bad UTF-8>")
+        );
 
         let sig = sign::sign_detached(&bytes, key);
 

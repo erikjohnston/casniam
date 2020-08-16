@@ -144,6 +144,47 @@ pub trait EventStore<R: RoomVersion>: Send + Sync + 'static {
         }
         .boxed()
     }
+
+    /// Returns the event IDs of all events in the given events' auth chain.
+    ///
+    /// The auth chain of an event is the graph of events with auth events as
+    /// the edges, i.e. the event's auth events, and their auth events,
+    /// recursively.
+    fn get_auth_chain_ids(
+        &self,
+        event_ids: Vec<String>,
+    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
+        async move {
+            let mut to_return = Vec::new();
+            let mut seen = BTreeSet::new();
+            let mut queue = event_ids;
+
+            while !queue.is_empty() {
+                let m: Vec<_> = queue.drain(..).collect();
+                let events = self
+                    .get_events(
+                        &m.iter().map(|e| e as &str).collect::<Vec<_>>(),
+                    )
+                    .await?;
+                for event in events {
+                    queue.extend(
+                        event
+                            .auth_event_ids()
+                            .into_iter()
+                            .map(ToString::to_string)
+                            .filter(|e_id| !seen.contains(e_id)),
+                    );
+                    if !seen.contains(event.event_id()) {
+                        seen.insert(event.event_id().to_string());
+                        to_return.push(event);
+                    }
+                }
+            }
+
+            Ok(to_return)
+        }
+        .boxed()
+    }
 }
 
 impl<R, E> EventStore<R> for Arc<E>

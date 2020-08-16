@@ -112,7 +112,10 @@ impl MatrixResolver {
             }]);
         }
 
-        let records = self.resolver.srv_lookup(host.as_ref()).await?;
+        let records = self
+            .resolver
+            .srv_lookup(format!("_matrix._tcp.{}", host).as_ref())
+            .await?;
 
         let mut priority_map: BTreeMap<u16, Vec<_>> = BTreeMap::new();
 

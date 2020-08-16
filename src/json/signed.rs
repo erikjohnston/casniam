@@ -1,5 +1,7 @@
 use super::canonical::Canonical;
 
+use log::trace;
+
 use std::collections::BTreeMap;
 
 use sodiumoxide::crypto::sign::{sign_detached, SecretKey, Signature};
@@ -56,7 +58,11 @@ impl<V, U> Signed<V, U> {
     }
 
     pub fn sign_detached(&self, key: &SecretKey) -> Signature {
-        sign_detached(self.get_canonical().as_bytes(), key)
+        let canonical = self.get_canonical();
+
+        trace!("Signing: {}", canonical);
+
+        sign_detached(canonical.as_bytes(), key)
     }
 }
 

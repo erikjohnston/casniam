@@ -195,10 +195,16 @@ where
                 )
                 .await?;
 
+            let auth_events = event_store
+                .get_auth_chain_ids(
+                    state.values().map(String::to_string).collect::<Vec<_>>(),
+                )
+                .await?;
+
             Ok(SendJoinResponse {
                 origin: self.server_name.clone(),
-                state: state_events.clone(),
-                auth_chain: state_events,
+                state: state_events,
+                auth_chain: auth_events,
             })
         }
         .boxed()
