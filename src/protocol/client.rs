@@ -153,6 +153,103 @@ impl HyperFederationClient {
         Ok(event)
     }
 
+    pub async fn make_join(
+        &self,
+        destination: &str,
+        room_id: &str,
+        user_id: &str,
+        valid_room_versions: &[&'static str],
+    ) -> Result<MakeJoinResponse, Error> {
+        let mut query = String::with_capacity(valid_room_versions.len() * 4);
+        for v in valid_room_versions {
+            query.push_str("v=");
+            query.push_str(*v);
+            query.push_str("&");
+        }
+
+        query.pop(); // Remove the last '&'
+
+        let path = format!(
+            "/_matrix/federation/v1/make_join/{}/{}?{}",
+            enc(room_id),
+            enc(user_id),
+            query,
+        );
+
+        let auth_header =
+            self.make_auth_header::<()>("GET", &path, destination, None);
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::get(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(hyper::Body::empty())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /event", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp: MakeJoinResponse = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    pub async fn send_join<R: RoomVersion>(
+        &self,
+        destination: &str,
+        room_id: &str,
+        event: R::Event,
+    ) -> Result<SendJoinResponse<R>, Error> {
+        let path = format!(
+            "/_matrix/federation/v2/make_join/{}/{}",
+            enc(room_id),
+            enc(event.event_id()),
+        );
+
+        let auth_header =
+            self.make_auth_header("PUT", &path, destination, Some(&event));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&event)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /event", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
     pub async fn get_missing_events<R: RoomVersion>(
         &self,
         destination: &str,
@@ -384,4 +481,16 @@ pub struct GetStateIdsResponse {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction<R: RoomVersion> {
     pub pdus: Vec<R::Event>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MakeJoinResponse {
+    pub room_version: String,
+    pub event: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SendJoinResponse<R: RoomVersion> {
+    pub auth_chain: Vec<R::Event>,
+    pub state: Vec<R::Event>,
 }
