@@ -1,3 +1,4 @@
+use crate::state_map::StateMap;
 use crate::stores::EventStore;
 
 use futures::future::BoxFuture;
@@ -8,11 +9,9 @@ use serde_json::Value;
 use sodiumoxide::crypto::sign;
 
 use std::borrow::Borrow;
-
 use std::fmt;
 use std::fmt::Debug;
 use std::iter::FromIterator;
-
 use std::pin::Pin;
 
 use failure::Error;
@@ -56,6 +55,31 @@ pub trait Event:
         key_name: String,
         key: &sign::SecretKey,
     );
+}
+
+impl<E> FromIterator<E> for StateMap<E>
+where
+    E: Event,
+{
+    fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> StateMap<E> {
+        let mut state_map = StateMap::new();
+
+        for event in iter {
+            let state_key = if let Some(state_key) = event.state_key() {
+                state_key.to_string()
+            } else {
+                continue;
+            };
+
+            state_map.insert(
+                &event.event_type().to_string(),
+                &state_key,
+                event,
+            );
+        }
+
+        state_map
+    }
 }
 
 pub trait RoomStateResolver {
@@ -143,4 +167,15 @@ impl RoomVersion for RoomVersion4 {
     type State = state::RoomStateResolverV2<Self>;
 
     const VERSION: &'static str = "4";
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RoomVersion5;
+
+impl RoomVersion for RoomVersion5 {
+    type Event = events::v3::SignedEventV3;
+    type Auth = auth_rules::AuthV1<Self>;
+    type State = state::RoomStateResolverV2<Self>;
+
+    const VERSION: &'static str = "5";
 }

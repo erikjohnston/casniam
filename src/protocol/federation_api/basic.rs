@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use crate::protocol::events::EventBuilder;
 use crate::protocol::{
     DagChunkFragment, Event, Handler, PersistEventInfo, RoomVersion,
-    RoomVersion3, RoomVersion4,
+    RoomVersion3, RoomVersion4, RoomVersion5,
 };
 use crate::state_map::StateMap;
 use crate::stores::StoreFactory;
@@ -269,6 +269,12 @@ where
                     }
                     RoomVersion4::VERSION => {
                         self.handle_incoming_events::<RoomVersion4>(
+                            &origin, events,
+                        )
+                        .await?
+                    }
+                    RoomVersion5::VERSION => {
+                        self.handle_incoming_events::<RoomVersion5>(
                             &origin, events,
                         )
                         .await?

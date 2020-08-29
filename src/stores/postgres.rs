@@ -1,6 +1,6 @@
 use crate::protocol::{
     Event, RoomState, RoomStateResolver, RoomVersion, RoomVersion3,
-    RoomVersion4,
+    RoomVersion4, RoomVersion5,
 };
 use crate::state_map::StateMap;
 use crate::stores::{
@@ -351,6 +351,7 @@ impl RoomVersionStore for PostgresEventStore {
                 match row.get(0) {
                     RoomVersion3::VERSION => Ok(Some(RoomVersion3::VERSION)),
                     RoomVersion4::VERSION => Ok(Some(RoomVersion4::VERSION)),
+                    RoomVersion5::VERSION => Ok(Some(RoomVersion5::VERSION)),
                     version => bail!("Unrecognized room version {}", version),
                 }
             } else {
@@ -371,7 +372,7 @@ impl RoomVersionStore for PostgresEventStore {
                 self.pool.get().await?;
 
             connection.execute(
-                "INSERT INTO room_versions (room_id, version) VALUES ($1, $2)",
+                "INSERT INTO room_versions (room_id, version) VALUES ($1, $2) ON CONFLICT (room_id) DO NOTHING",
                 &[&room_id, &version]
             ).await?;
 

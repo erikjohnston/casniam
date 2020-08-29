@@ -1,12 +1,12 @@
 #![allow(clippy::type_complexity)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
 use failure::{format_err, Error};
 use futures::future::{BoxFuture, Ready};
 use futures::FutureExt;
-use log::{error, info};
+use log::{debug, error, info};
 use percent_encoding::percent_decode_str;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -27,8 +27,9 @@ use casniam::protocol::federation_api::{
 use casniam::protocol::server_keys::KeyServerServlet;
 use casniam::protocol::server_resolver::{MatrixConnector, MatrixResolver};
 use casniam::protocol::{
-    DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
-    RoomVersion3, RoomVersion4,
+    json::serialize_canonically_remove_fields, DagChunkFragment, Event,
+    Handler, PersistEventInfo, RoomState, RoomVersion, RoomVersion3,
+    RoomVersion4, RoomVersion5,
 };
 use casniam::state_map::StateMap;
 use casniam::stores::{postgres, StoreFactory};
@@ -137,7 +138,14 @@ where
 #[macro_export]
 macro_rules! route_room_version {
     ($ver:expr, $f:expr) => {
-        match $ver {
+        route_room_version!(
+            $ver,
+            $f,
+            actix_web::error::ErrorInternalServerError("Unknown version",)
+        )
+    };
+    ($ver:expr, $f:expr, $error:expr) => {
+        match $ver as &str {
             RoomVersion3::VERSION => {
                 type R = RoomVersion3;
                 $f
@@ -146,11 +154,13 @@ macro_rules! route_room_version {
                 type R = RoomVersion4;
                 $f
             }
+            RoomVersion5::VERSION => {
+                type R = RoomVersion5;
+                $f
+            }
             _ => {
                 error!("Unrecognized version {}", $ver);
-                return Err(actix_web::error::ErrorInternalServerError(
-                    "Unknown version",
-                ));
+                return Err($error);
             }
         }
     };
@@ -165,6 +175,7 @@ struct AppData<F> {
     federation_sender: MemoryTransactionSender,
     key_server_servlet: KeyServerServlet,
     federation_api: StandardFederationAPI<F, BasicHooks<F>>,
+    client: HyperFederationClient,
 }
 
 impl<F> AppData<F>
@@ -349,7 +360,7 @@ where
         R::Event: Serialize,
     {
         let event_store = self.stores.get_event_store::<R>();
-        let state_store = self.stores.get_state_store::<R>();
+        // let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
         let handler = self.federation_api.handler();
@@ -365,11 +376,11 @@ where
             assert!(!info.rejected);
         }
 
-        for info in &stuff {
-            state_store
-                .insert_state(&info.event, info.state_before.clone())
-                .await?;
-        }
+        // for info in &stuff {
+        //     state_store
+        //         .insert_state(&info.event, info.state_before.clone())
+        //         .await?;
+        // }
 
         event_store
             .insert_events(
@@ -385,6 +396,177 @@ where
             .await?;
 
         Ok(stuff)
+    }
+
+    async fn join_room(
+        self,
+        destination: &str,
+        room_id: &str,
+        user_id: &str,
+        display_name: &str,
+    ) -> Result<&'static str, Error> {
+        let response = self
+            .client
+            .make_join(
+                destination,
+                room_id,
+                user_id,
+                &[
+                    RoomVersion3::VERSION,
+                    RoomVersion4::VERSION,
+                    RoomVersion5::VERSION,
+                ],
+            )
+            .await?;
+
+        let room_version = route_room_version!(
+            &response.room_version,
+            {
+                self.join_room_version::<R>(
+                    destination,
+                    room_id,
+                    user_id,
+                    display_name,
+                    response.event,
+                )
+                .await?;
+
+                R::VERSION
+            },
+            failure::format_err!("Unknown room version")
+        );
+
+        Ok(room_version)
+    }
+
+    async fn join_room_version<R: RoomVersion>(
+        self,
+        destination: &str,
+        room_id: &str,
+        user_id: &str,
+        display_name: &str,
+        proto_event: serde_json::Value,
+    ) -> Result<(), Error> {
+        // let event_store = self.stores.get_event_store::<R>();
+        // let state_store = self.stores.get_state_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
+        let room_version_store = self.stores.get_room_version_store();
+
+        let mut event_json = json!({
+            "room_id": room_id,
+            "type": "m.room.member",
+            "content": {
+                "membership": "join",
+                "displayname": display_name,
+            },
+            "sender": user_id,
+            "state_key": user_id,
+            "auth_events": proto_event.get("auth_events"),
+            "prev_events": proto_event.get("prev_events"),
+            "depth": proto_event.get("depth"),
+            "origin_server_ts": chrono::Utc::now().timestamp_millis() as u64,
+            "origin": &self.server_name,
+        });
+
+        let serialized = serialize_canonically_remove_fields(
+            event_json.clone(),
+            &["hashes"],
+        )?;
+
+        let computed_hash = Sha256::digest(&serialized);
+
+        event_json["hashes"] = json!({
+            "sha256":
+                base64::encode_config(&computed_hash, base64::STANDARD_NO_PAD)
+        });
+
+        let mut event: R::Event = serde_json::from_value(event_json)?;
+
+        event.sign(
+            self.server_name.clone(),
+            self.key_id.clone(),
+            &self.secret_key,
+        );
+
+        debug!("Created send_join event: {:?}", event);
+
+        // event_store.insert_event(event.clone()).await?;
+
+        let response = self
+            .client
+            .send_join::<R>(destination, room_id, &event)
+            .await?;
+
+        room_version_store
+            .set_room_version(room_id, R::VERSION)
+            .await?;
+
+        let handler = self.federation_api.handler();
+
+        let mut all_events = response.state.clone();
+        all_events.extend_from_slice(&response.auth_chain);
+        all_events.push(event.clone());
+
+        let len_all_events = all_events.len();
+
+        let persisted_events = handler
+            .check_auth_auth_chain_and_persist::<R>(
+                destination,
+                room_id,
+                all_events,
+            )
+            .await?;
+
+        if persisted_events.len() != len_all_events {
+            todo!()
+        }
+
+        let mut event_to_state = HashMap::new();
+        event_to_state.insert(
+            event.event_id().to_string(),
+            response
+                .state
+                .into_iter()
+                .filter_map(|e| {
+                    e.state_key().map(|state_key| {
+                        (
+                            (e.event_type().to_string(), state_key.to_string()),
+                            e.event_id().to_string(),
+                        )
+                    })
+                })
+                .collect(),
+        );
+
+        let stuff = handler
+            .handle_chunk::<R>(
+                DagChunkFragment::from_event(event.clone()),
+                event_to_state,
+            )
+            .await?;
+
+        // for info in &stuff {
+        //     state_store
+        //         .insert_state(&info.event, info.state_before.clone())
+        //         .await?;
+        // }
+
+        room_store.insert_new_events(vec![event.clone()]).await?;
+
+        for info in &stuff {
+            info!(
+                "Stored event {} from {}",
+                info.event.event_id(),
+                info.event.sender()
+            );
+        }
+
+        self.federation_sender
+            .send_event::<R>(destination.to_string(), event)
+            .await
+            .unwrap();
+
+        Ok(())
     }
 
     async fn generate_room<R>(
@@ -543,6 +725,28 @@ where
                 let body = app_data.key_server_servlet.make_body();
 
                 Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+            },
+        ),
+    )
+    .route(
+        "/join/{host}/{room}/{user}/{display_name}",
+        actix_web::web::get().to(
+            |(app_data, path): (actix_web::web::Data<AppData<F>>, actix_web::web::Path<(String,String,String,String)>,)| async move {
+
+                let app_data: AppData<F> = app_data.as_ref().clone();
+
+                let destination =  percent_decode_str(&path.0).decode_utf8()?.into_owned();
+                let room_id = percent_decode_str(&path.1).decode_utf8()?.into_owned();
+                let user_id = percent_decode_str(&path.2).decode_utf8()?.into_owned();
+                let display_name = percent_decode_str(&path.3).decode_utf8()?.into_owned();
+
+                let room_version = app_data.clone().join_room(&destination, &room_id, &user_id, &display_name).await?;
+
+                route_room_version!(room_version, tokio::spawn(async move{
+                    app_data.send_some_events::<R>(room_id, destination).await.ok();
+                }));
+
+                Ok(actix_web::web::Json(json!({}))) as actix_web::Result<_>
             },
         ),
     )
@@ -863,7 +1067,7 @@ async fn main() -> std::io::Result<()> {
         secret_key.clone(),
     );
 
-    let handler = Handler::new(stores.clone(), matrix_client);
+    let handler = Handler::new(stores.clone(), matrix_client.clone());
 
     let federation_api = StandardFederationAPI::new(
         stores.clone(),
@@ -882,6 +1086,7 @@ async fn main() -> std::io::Result<()> {
         key_server_servlet,
         stores,
         federation_api,
+        client: matrix_client,
     };
 
     let http_server = actix_web::HttpServer::new(move || {

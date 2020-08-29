@@ -160,9 +160,9 @@ impl HyperFederationClient {
         user_id: &str,
         valid_room_versions: &[&'static str],
     ) -> Result<MakeJoinResponse, Error> {
-        let mut query = String::with_capacity(valid_room_versions.len() * 4);
+        let mut query = String::with_capacity(valid_room_versions.len() * 6);
         for v in valid_room_versions {
-            query.push_str("v=");
+            query.push_str("ver=");
             query.push_str(*v);
             query.push_str("&");
         }
@@ -197,7 +197,7 @@ impl HyperFederationClient {
             .map_err(|e| format_err!("{}", e))?;
 
         if !response.status().is_success() {
-            bail!("Got {} response code for /event", response.status());
+            bail!("Got {} response code for /make_join", response.status());
         }
 
         let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -211,10 +211,10 @@ impl HyperFederationClient {
         &self,
         destination: &str,
         room_id: &str,
-        event: R::Event,
+        event: &R::Event,
     ) -> Result<SendJoinResponse<R>, Error> {
         let path = format!(
-            "/_matrix/federation/v2/make_join/{}/{}",
+            "/_matrix/federation/v2/send_join/{}/{}",
             enc(room_id),
             enc(event.event_id()),
         );
@@ -240,7 +240,7 @@ impl HyperFederationClient {
             .map_err(|e| format_err!("{}", e))?;
 
         if !response.status().is_success() {
-            bail!("Got {} response code for /event", response.status());
+            bail!("Got {} response code for /send_join", response.status());
         }
 
         let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
