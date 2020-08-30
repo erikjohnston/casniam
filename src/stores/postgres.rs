@@ -13,22 +13,41 @@ use bb8_postgres::PostgresConnectionManager;
 use failure::Error;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-
-use std::collections::{BTreeMap, BTreeSet};
-
-use std::sync::Arc;
+use lru_time_cache::LruCache;
 use tokio_postgres::types::ToSql;
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
+
 type PgPool = Pool<PostgresConnectionManager<NoTls>>;
+
+#[derive(Clone)]
+struct EventCache<R: RoomVersion> {
+    cache: LruCache<String, R::Event>,
+}
+
+impl<R: RoomVersion> EventCache<R> {
+    fn new() -> Self {
+        let time_to_live = ::std::time::Duration::from_secs(60);
+
+        EventCache {
+            cache: LruCache::with_expiry_duration(time_to_live),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PostgresEventStore {
     pool: PgPool,
+    event_caches: Arc<Mutex<anymap::Map<dyn anymap::any::Any + Send + Sync>>>,
 }
 
 impl PostgresEventStore {
     pub fn new(pool: PgPool) -> PostgresEventStore {
-        PostgresEventStore { pool }
+        PostgresEventStore {
+            pool,
+            event_caches: Arc::new(Mutex::new(anymap::Map::new())),
+        }
     }
 }
 
@@ -97,8 +116,34 @@ where
         &self,
         event_ids: &[&str],
     ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
-        let event_ids: Vec<String> =
+        let mut event_ids: Vec<String> =
             event_ids.iter().map(|s| s.to_string()).collect();
+
+        let mut events = Vec::with_capacity(event_ids.len());
+
+        {
+            let mut caches =
+                self.event_caches.lock().expect("event cache lock");
+
+            let cache: &mut EventCache<R> =
+                caches.entry().or_insert_with(EventCache::new);
+
+            let mut unfound_event_ids = Vec::with_capacity(event_ids.len());
+
+            for event_id in event_ids {
+                if let Some(event) = cache.cache.get(&event_id) {
+                    events.push(event.clone());
+                } else {
+                    unfound_event_ids.push(event_id);
+                }
+            }
+
+            event_ids = unfound_event_ids;
+        }
+
+        if event_ids.is_empty() {
+            return futures::future::ok(events).boxed();
+        }
 
         async move {
             let connection: PooledConnection<PostgresConnectionManager<NoTls>> =
@@ -111,11 +156,24 @@ where
                 )
                 .await?;
 
-            let mut events = Vec::with_capacity(event_ids.len());
             for row in rows {
                 let row: String = row.get(0);
                 let event: R::Event = serde_json::from_str(&row).unwrap();
                 events.push(event);
+            }
+
+            {
+                let mut caches =
+                    self.event_caches.lock().expect("event cache lock");
+
+                let cache: &mut EventCache<R> =
+                    caches.entry().or_insert_with(EventCache::new);
+
+                for event in &events {
+                    cache
+                        .cache
+                        .insert(event.event_id().to_string(), event.clone());
+                }
             }
 
             Ok(events)

@@ -40,6 +40,7 @@ config = "0.10.1"
 unescape = "0.1.0"
 indicatif = "0.15.0"
 im = "15.0.0"
+lru_time_cache = "0.10.0"
 
 [dependencies.tokio]
 version = "0.2.21"
