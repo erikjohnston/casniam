@@ -121,6 +121,10 @@ pub trait RoomState<E>:
     fn keys(&self) -> Vec<(&str, &str)>;
 
     fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a>;
+
+    fn iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a>;
 }
 
 pub trait AuthRules {

@@ -17,6 +17,7 @@ use futures::FutureExt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use std::sync::Arc;
+use tokio_postgres::types::ToSql;
 
 type PgPool = Pool<PostgresConnectionManager<NoTls>>;
 
@@ -147,14 +148,29 @@ where
 
             let txn = connection.transaction().await?;
 
-            // TODO: Persist state separately.
-            for ((typ, state_key), state_id) in state.into_iter() {
-                txn.execute(
+            // We need to pull the args into a Vec so that they live long enough
+            // (i.e. after the loop), as we don't `await` within the loop so
+            // args get dropped.
+            let args: Vec<_> = state.iter()
+                .map(|((typ, state_key), state_id)| [
+                    &event_id as &str,
+                    &typ,
+                    &state_key,
+                    &state_id,
+                ])
+                .collect();
+
+            let mut futs = Vec::new();
+            for arg in &args {
+                let fut = txn.execute_raw(
                     r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
-                    &[&event_id, &typ, &state_key, &state_id],
-                )
-                .await?;
+                    arg.iter().map(|s| s as &dyn ToSql),
+                );
+
+                futs.push(fut);
             }
+
+            futures::future::try_join_all(futs).await?;
 
             if let Some(state_key) = event_state_key {
                 txn.execute(

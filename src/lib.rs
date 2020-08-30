@@ -72,4 +72,10 @@ where
     fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a> {
         Box::new(self.values())
     }
+
+    fn iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a> {
+        Box::new(self.iter())
+    }
 }
