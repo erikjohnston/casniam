@@ -1,11 +1,11 @@
 use crate::protocol::{
     Event, RoomState, RoomStateResolver, RoomVersion, RoomVersion3,
-    RoomVersion4, RoomVersion5,
+    RoomVersion4, RoomVersion5, StateMetadata,
 };
-use crate::state_map::StateMap;
 use crate::stores::{
     EventStore, RoomStore, RoomVersionStore, StateStore, StoreFactory,
 };
+use crate::StateMapWithData;
 
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::tokio_postgres::NoTls;
@@ -131,11 +131,11 @@ where
     S: RoomState<String> + Send + Sync + 'static,
     <S as IntoIterator>::IntoIter: Send,
 {
-    fn insert_state(
-        &self,
+    fn insert_state<'a>(
+        &'a self,
         event: &R::Event,
-        state: S,
-    ) -> BoxFuture<Result<(), Error>> {
+        state: &'a mut S,
+    ) -> BoxFuture<'a, Result<(), Error>> {
         let event_id = event.event_id().to_string();
 
         let event_type = event.event_type().to_string();
@@ -145,42 +145,76 @@ where
             let mut connection: PooledConnection<
                 PostgresConnectionManager<NoTls>,
             > = self.pool.get().await?;
-
             let txn = connection.transaction().await?;
 
-            // We need to pull the args into a Vec so that they live long enough
-            // (i.e. after the loop), as we don't `await` within the loop so
-            // args get dropped.
-            let args: Vec<_> = state.iter()
-                .map(|((typ, state_key), state_id)| [
-                    &event_id as &str,
-                    &typ,
-                    &state_key,
-                    &state_id,
-                ])
-                .collect();
-
-            let mut futs = Vec::new();
-            for arg in &args {
-                let fut = txn.execute_raw(
-                    r#"INSERT INTO state (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
-                    arg.iter().map(|s| s as &dyn ToSql),
-                );
-
-                futs.push(fut);
-            }
-
-            futures::future::try_join_all(futs).await?;
-
-            if let Some(state_key) = event_state_key {
+            if let StateMetadata::Persisted(state_group) = state.metadata() {
                 txn.execute(
-                    r#"INSERT INTO state_after (event_id, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
-                    &[&event_id, &event_type, &state_key, &event_id],
+                    r#"INSERT INTO event_to_state_group (event_id, state_group) VALUES ($1, $2)"#,
+                    &[&event_id, &(*state_group as i64)],
                 )
                 .await?;
-            }
 
-            txn.commit().await?;
+                txn.commit().await?;
+            } else {
+                let row = txn.query_one(
+                    r#"INSERT INTO state_groups (event_id) VALUES ($1) RETURNING state_group"#,
+                    &[&event_id],
+                )
+                .await?;
+
+                let state_group: i64 = row.get(0);
+
+                txn.execute(
+                    r#"INSERT INTO event_to_state_group (event_id, state_group) VALUES ($1, $2)"#,
+                    &[&event_id, &state_group],
+                )
+                .await?;
+
+                let insert_stmt = txn.prepare(
+                    r#"INSERT INTO state (state_group, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#)
+                .await?;
+
+                // We need to pull the args into a Vec so that they live long enough
+                // (i.e. after the loop), as we don't `await` within the loop so
+                // args get dropped.
+                //
+                // Annoyingly we have to box these as the types don't match
+                let args: Vec<_> = state.iter()
+                    .map(|((typ, state_key), state_id)| [
+                        Box::new(state_group) as Box<dyn ToSql + Send + Sync>,
+                        Box::new(typ),
+                        Box::new(state_key),
+                        Box::new(state_id),
+                    ])
+                    .collect();
+
+                let mut futs = Vec::new();
+                for arg in &args {
+                    let fut = txn.execute_raw(
+                        &insert_stmt,
+                        arg.iter().map(|s| s.as_ref() as &dyn ToSql),
+                    );
+
+                    futs.push(fut);
+                }
+
+                futures::future::try_join_all(futs).await?;
+
+                // We drop this so we drop the immutable reference ot state
+                std::mem::drop(args);
+
+                if let Some(state_key) = event_state_key {
+                    txn.execute(
+                        r#"INSERT INTO state_after (state_group, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
+                        &[&state_group, &event_type, &state_key, &event_id],
+                    )
+                    .await?;
+                }
+
+                txn.commit().await?;
+
+                state.mark_persisted(state_group as usize);
+            }
 
             Ok(())
         }
@@ -199,18 +233,26 @@ where
 
             let rows = connection
                 .query(
-                    "SELECT type, state_key, state_event_id FROM state WHERE event_id = $1",
+                    "SELECT type, state_key, state_event_id
+                    FROM state
+                    INNER JOIN event_to_state_group USING (state_group)
+                    WHERE event_id = $1",
                     &[&event_id],
                 )
                 .await?;
 
-            let state = rows.into_iter().map(|row| {
-                let typ: String = row.get(0);
-                let state_key: String = row.get(1);
-                let state_event_id: String = row.get(2);
+            let state = rows
+                .into_iter()
+                .map(|row| {
+                    let typ: String = row.get(0);
+                    let state_key: String = row.get(1);
+                    let state_event_id: String = row.get(2);
 
-                ((typ, state_key), state_event_id)
-            }).collect();
+                    ((typ, state_key), state_event_id)
+                })
+                .collect();
+
+            // TODO: Mark state group.
 
             Ok(Some(state))
         }
@@ -231,9 +273,17 @@ where
             let rows = connection
                 .query(
                     r#"
-                        SELECT event_id, type, state_key, state_event_id, 1 AS ordering FROM state WHERE event_id = ANY($1)
+                        WITH state_groups AS (
+                            SELECT event_id, state_group FROM event_to_state_group
+                            WHERE event_id = ANY($1)
+                        )
+                        SELECT event_id, type, state_key, state_event_id, state_group, 1 AS ordering
+                            FROM state
+                            INNER JOIN state_groups USING (state_group)
                         UNION
-                        SELECT event_id, type, state_key, state_event_id, 2 AS ordering FROM state_after WHERE event_id = ANY($1)
+                        SELECT event_id, type, state_key, state_event_id, state_group, 2 AS ordering
+                            FROM state_after
+                            INNER JOIN state_groups USING (state_group)
                         ORDER BY ordering ASC
                     "#,
                     &[&event_ids],
@@ -247,8 +297,17 @@ where
                 let typ: String = row.get(1);
                 let state_key: String = row.get(2);
                 let state_event_id: String = row.get(3);
+                let state_group: i64 = row.get(4);
+                let ordering: i32 = row.get(5);
 
-                states.entry(event_id.clone()).or_default().add_event(typ, state_key, state_event_id);
+                let s = states.entry(event_id.clone()).or_default();
+                s.add_event(typ, state_key, state_event_id);
+
+                // If ordering is 1 then we're still adding events as part of
+                // the state group, so we reset the persisted flag.
+                if ordering == 1 {
+                    s.mark_persisted(state_group as usize);
+                }
             }
 
             // TODO: Return None if we don't have some state.
@@ -398,14 +457,14 @@ impl RoomVersionStore for PostgresEventStore {
     }
 }
 
-impl StoreFactory<StateMap<String>> for PostgresEventStore {
+impl StoreFactory<StateMapWithData<String>> for PostgresEventStore {
     fn get_event_store<R: RoomVersion>(&self) -> Arc<dyn EventStore<R>> {
         Arc::new(self.clone())
     }
 
     fn get_state_store<R: RoomVersion>(
         &self,
-    ) -> Arc<dyn StateStore<R, StateMap<String>>> {
+    ) -> Arc<dyn StateStore<R, StateMapWithData<String>>> {
         Arc::new(self.clone())
     }
 

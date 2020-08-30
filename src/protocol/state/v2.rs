@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::protocol::{
     AuthRules, Event, RoomState, RoomStateResolver, RoomVersion,
 };
-use crate::state_map::StateMap;
 use crate::stores::EventStore;
+use crate::StateMapWithData;
 
 pub struct RoomStateResolverV2<R> {
     _room_version: PhantomData<R>,
@@ -376,7 +376,7 @@ async fn iterative_auth_checks<
         );
 
         let auth_events = store.get_events(&event.auth_event_ids()).await?;
-        let mut auth_map = StateMap::new();
+        let mut auth_map = StateMapWithData::default();
         for e in auth_events {
             if let Some(state_key) = e.state_key() {
                 if types.contains(&(
@@ -494,14 +494,14 @@ mod tests {
 
     use crate::protocol::events::EventBuilder;
     use crate::protocol::{RoomStateResolver, RoomVersion, RoomVersion3};
-    use crate::state_map::StateMap;
     use crate::stores::memory::{new_memory_store, MemoryEventStore};
     use crate::stores::StateStore;
+    use crate::StateMapWithData;
 
     use futures::executor::block_on;
 
     fn create_event(
-        store: &MemoryEventStore<RoomVersion3, StateMap<String>>,
+        store: &MemoryEventStore<RoomVersion3, StateMapWithData<String>>,
         event_type: &str,
         state_key: Option<&str>,
         sender: &str,
@@ -531,7 +531,7 @@ mod tests {
 
         let event_id = event.event_id().to_string();
 
-        block_on(store.insert_state(&event, state)).unwrap();
+        block_on(store.insert_state(&event, &mut state)).unwrap();
         block_on(store.insert_events(vec![event])).unwrap();
 
         event_id
@@ -583,7 +583,7 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved.map.len(), 1);
     }
 
     #[test]
@@ -663,7 +663,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(!final_state.contains_key("m.room.member", bob));
+        assert!(!final_state.map.contains_key("m.room.member", bob));
     }
 
     #[test]

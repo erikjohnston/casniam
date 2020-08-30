@@ -25,25 +25,62 @@ pub mod state_map;
 pub mod stores;
 
 use std::borrow::Borrow;
-use std::fmt::Debug;
+use std::{fmt::Debug, iter::FromIterator};
 
-use crate::protocol::RoomState;
+use crate::protocol::{RoomState, StateMetadata};
 use crate::state_map::StateMap;
 
-impl<E> RoomState<E> for StateMap<E>
+#[derive(Debug, Clone)]
+pub struct StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    map: StateMap<E>,
+    metadata: StateMetadata,
+}
+
+impl<E> Default for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        StateMapWithData {
+            map: StateMap::new(),
+            metadata: StateMetadata::default(),
+        }
+    }
+}
+
+impl<E> StateMapWithData<E>
 where
     E: Clone + Debug + Send + Sync + 'static,
 {
     fn new() -> Self {
-        StateMap::new()
+        StateMapWithData::default()
+    }
+
+    fn insert(&mut self, t: &str, s: &str, value: E) {
+        self.metadata.changed(t, s);
+        self.map.insert(t, s, value);
+    }
+}
+
+impl<E> RoomState<E> for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn new() -> Self {
+        StateMapWithData::new()
     }
 
     fn add_event(&mut self, etype: String, state_key: String, event_id: E) {
-        self.insert(&etype, &state_key, event_id);
+        self.metadata.changed(&etype, &state_key);
+        self.map.insert(&etype, &state_key, event_id);
     }
 
     fn remove(&mut self, etype: &str, state_key: &str) {
-        self.remove(etype, state_key);
+        self.metadata.changed(&etype, &state_key);
+        self.map.remove(etype, state_key);
     }
 
     fn get(
@@ -51,7 +88,7 @@ where
         event_type: impl Borrow<str>,
         state_key: impl Borrow<str>,
     ) -> Option<&E> {
-        self.get(event_type.borrow(), state_key.borrow())
+        self.map.get(event_type.borrow(), state_key.borrow())
     }
 
     fn get_event_ids(
@@ -60,22 +97,116 @@ where
     ) -> Vec<E> {
         types
             .into_iter()
-            .filter_map(|(t, s)| self.get(&t, &s))
+            .filter_map(|(t, s)| self.map.get(&t, &s))
             .cloned()
             .collect()
     }
 
     fn keys(&self) -> Vec<(&str, &str)> {
-        self.keys().collect()
+        self.map.keys().collect()
     }
 
-    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a> {
-        Box::new(self.values())
+    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + Send + 'a> {
+        Box::new(self.map.values())
     }
 
     fn iter<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a> {
-        Box::new(self.iter())
+        Box::new(self.map.iter())
     }
+
+    fn metadata(&self) -> &StateMetadata {
+        &self.metadata
+    }
+
+    fn mark_persisted(&mut self, sg: usize) {
+        self.metadata.mark_persisted(sg);
+    }
+}
+
+impl<E> FromIterator<((String, String), E)> for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn from_iter<T: IntoIterator<Item = ((String, String), E)>>(
+        iter: T,
+    ) -> StateMapWithData<E> {
+        let map = iter.into_iter().collect();
+
+        StateMapWithData {
+            map,
+            metadata: StateMetadata::default(),
+        }
+    }
+}
+
+impl<'a, E> FromIterator<((&'a str, &'a str), E)> for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn from_iter<T: IntoIterator<Item = ((&'a str, &'a str), E)>>(
+        iter: T,
+    ) -> StateMapWithData<E> {
+        let map = iter.into_iter().collect();
+
+        StateMapWithData {
+            map,
+            metadata: StateMetadata::default(),
+        }
+    }
+}
+
+impl<E> Extend<((String, String), E)> for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn extend<T>(&mut self, iter: T)
+    where
+        T: IntoIterator<Item = ((String, String), E)>,
+    {
+        for ((t, s), e) in iter {
+            self.insert(&t, &s, e);
+        }
+    }
+}
+
+impl<'a, E> Extend<((&'a str, &'a str), E)> for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    fn extend<T>(&mut self, iter: T)
+    where
+        T: IntoIterator<Item = ((&'a str, &'a str), E)>,
+    {
+        for ((t, s), e) in iter {
+            self.insert(t, s, e);
+        }
+    }
+}
+
+impl<E> IntoIterator for StateMapWithData<E>
+where
+    E: Clone + Debug + Send + Sync + 'static,
+{
+    type Item = ((String, String), E);
+    type IntoIter = Box<dyn Iterator<Item = Self::Item> + Send>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.into_iter()
+    }
+}
+
+impl<E> PartialEq for StateMapWithData<E>
+where
+    E: PartialEq + Clone + Debug + Send + Sync + 'static,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.map.eq(&other.map)
+    }
+}
+
+impl<E> Eq for StateMapWithData<E> where
+    E: Eq + PartialEq + Clone + Debug + Send + Sync + 'static
+{
 }

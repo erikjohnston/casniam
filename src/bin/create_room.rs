@@ -31,8 +31,8 @@ use casniam::protocol::{
     DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
     RoomVersion3, RoomVersion4,
 };
-use casniam::state_map::StateMap;
 use casniam::stores::{postgres, StoreFactory};
+use casniam::StateMapWithData;
 
 #[derive(Serialize, Deserialize)]
 struct RoomAliasQuery {
@@ -58,11 +58,16 @@ struct BasicHooks<F> {
 
 impl<F> Hooks for BasicHooks<F>
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    F: StoreFactory<StateMapWithData<String>>
+        + Sized
+        + Send
+        + Sync
+        + Clone
+        + 'static,
 {
     fn on_new_events<R: RoomVersion>(
         &self,
-        infos: &[PersistEventInfo<R, StateMap<String>>],
+        infos: &[PersistEventInfo<R, StateMapWithData<String>>],
     ) -> BoxFuture<FederationResult<()>> {
         let infos = infos.to_vec();
 
@@ -93,7 +98,7 @@ where
                     let event_ids =
                         extrems.iter().map(|e| e as &str).collect::<Vec<_>>();
 
-                    let state: StateMap<String> =
+                    let mut state: StateMapWithData<String> =
                         state_store.get_state_after(&event_ids).await?.unwrap();
 
                     let mut event: R::Event = EventBuilder::from_json(json!({
@@ -115,7 +120,7 @@ where
                         &self.secret_key,
                     );
 
-                    state_store.insert_state(&event, state).await?;
+                    state_store.insert_state(&event, &mut state).await?;
                     event_store.insert_event(event.clone()).await?;
                     room_store.insert_new_event(event.clone()).await?;
 
@@ -170,7 +175,12 @@ struct AppData<F> {
 
 impl<F> AppData<F>
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    F: StoreFactory<StateMapWithData<String>>
+        + Sized
+        + Send
+        + Sync
+        + Clone
+        + 'static,
 {
     async fn send_some_events<R>(
         self,
@@ -212,14 +222,14 @@ where
             &self.secret_key,
         );
 
-        let state = state_store
+        let mut state = state_store
             .get_state_after(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        state_store.insert_state(&event, state).await?;
+        state_store.insert_state(&event, &mut state).await?;
         event_store.insert_event(event.clone()).await?;
         room_store.insert_new_event(event.clone()).await?;
 
@@ -252,14 +262,14 @@ where
             &self.secret_key,
         );
 
-        let state = state_store
+        let mut state = state_store
             .get_state_after(
                 &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
             )
             .await?
             .unwrap();
 
-        state_store.insert_state(&event, state).await?;
+        state_store.insert_state(&event, &mut state).await?;
         event_store.insert_event(event.clone()).await?;
         room_store.insert_new_event(event.clone()).await?;
 
@@ -344,7 +354,7 @@ where
         origin: &str,
         room_id: &str,
         chunk: DagChunkFragment<R::Event>,
-    ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
+    ) -> Result<Vec<PersistEventInfo<R, StateMapWithData<String>>>, Error>
     where
         R: RoomVersion,
         R::Event: Serialize,
@@ -354,7 +364,7 @@ where
         let room_store = self.stores.get_room_store::<R>();
 
         let handler = self.federation_api.handler();
-        let stuff = handler
+        let mut stuff = handler
             .handle_new_timeline_events::<R>(
                 origin,
                 room_id,
@@ -366,9 +376,9 @@ where
             assert!(!info.rejected);
         }
 
-        for info in &stuff {
+        for info in &mut stuff {
             state_store
-                .insert_state(&info.event, info.state_before.clone())
+                .insert_state(&info.event, &mut info.state_before)
                 .await?;
         }
 
@@ -391,7 +401,7 @@ where
     async fn generate_room<R>(
         self,
         room_id: String,
-    ) -> Result<Vec<PersistEventInfo<R, StateMap<String>>>, Error>
+    ) -> Result<Vec<PersistEventInfo<R, StateMapWithData<String>>>, Error>
     where
         R: RoomVersion + Send,
         R::Event: Serialize + Send,
@@ -525,7 +535,12 @@ impl FromRequest for Authenticate {
 
 fn add_routes<F>(cfg: &mut actix_web::web::ServiceConfig)
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    F: StoreFactory<StateMapWithData<String>>
+        + Sized
+        + Send
+        + Sync
+        + Clone
+        + 'static,
 {
     cfg.route(
         "/_matrix/key/v2/server",

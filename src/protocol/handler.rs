@@ -1,9 +1,9 @@
 use crate::protocol::{
     client, AuthRules, Event, RoomState, RoomStateResolver, RoomVersion,
 };
-use crate::state_map::StateMap;
 use crate::stores::backed::BackedStore;
 use crate::stores::{EventStore, StoreFactory};
+use crate::StateMapWithData;
 
 use log::{info, warn};
 use petgraph::visit::Walker;
@@ -122,7 +122,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .map(|e| (e.event_id(), e))
                 .collect();
 
-            let auth_state: StateMap<R::Event> = event
+            let auth_state: StateMapWithData<R::Event> = event
                 .auth_event_ids()
                 .iter()
                 .filter_map(|aid| event_map.get(aid))
@@ -419,7 +419,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .map(|e| event_to_state_after[e as &str].clone())
                 .collect();
 
-            let state_before: S =
+            let mut state_before: S =
                 R::State::resolve_state(states, &store).await?;
 
             let auth_types = R::Auth::auth_types_for_event(
@@ -438,7 +438,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .collect();
 
             let auth_events = store.get_events(&state_event_ids).await?;
-            let auth_state: StateMap<R::Event> = auth_events
+            let auth_state: StateMapWithData<R::Event> = auth_events
                 .into_iter()
                 .filter_map(|e| {
                     let state_key = if let Some(state_key) = e.state_key() {
@@ -466,6 +466,8 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 }
             };
 
+            state_store.insert_state(&event, &mut state_before).await?;
+
             let mut state_after = state_before.clone();
             if !rejected {
                 if let Some(state_key) = event.state_key() {
@@ -476,10 +478,6 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                     );
                 }
             }
-
-            state_store
-                .insert_state(&event, state_before.clone())
-                .await?;
 
             store.insert_event(event.clone()).await?;
 
@@ -701,8 +699,8 @@ mod tests {
     use super::*;
     use crate::protocol::client::HyperFederationClient;
     use crate::protocol::events;
-    use crate::state_map::StateMap;
     use crate::stores::memory;
+    use crate::StateMapWithData;
 
     use futures::executor::block_on;
     use futures::future;
@@ -922,7 +920,7 @@ mod tests {
             secret_key,
         );
 
-        let handler = Handler::<StateMap<String>, _>::new(
+        let handler = Handler::<StateMapWithData<String>, _>::new(
             memory::MemoryStoreFactory::new(),
             client,
         );

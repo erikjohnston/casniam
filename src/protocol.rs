@@ -91,6 +91,43 @@ pub trait RoomStateResolver {
     ) -> BoxFuture<Result<S, Error>>;
 }
 
+#[derive(Debug, Clone)]
+pub enum StateMetadata {
+    Persisted(usize),
+    Delta {
+        prev: usize,
+        deltas: Vec<(String, String)>,
+    },
+    New,
+}
+
+impl StateMetadata {
+    pub fn changed(&mut self, etype: &str, state_key: &str) {
+        match self {
+            &mut StateMetadata::Persisted(sg) => {
+                *self = StateMetadata::Delta {
+                    prev: sg,
+                    deltas: vec![(etype.to_string(), state_key.to_string())],
+                };
+            }
+            StateMetadata::Delta { prev: _, deltas } => {
+                deltas.push((etype.to_string(), state_key.to_string()));
+            }
+            StateMetadata::New => {}
+        }
+    }
+
+    pub fn mark_persisted(&mut self, sg: usize) {
+        *self = StateMetadata::Persisted(sg);
+    }
+}
+
+impl Default for StateMetadata {
+    fn default() -> Self {
+        StateMetadata::New
+    }
+}
+
 pub trait RoomState<E>:
     IntoIterator<Item = ((String, String), E)>
     + FromIterator<((String, String), E)>
@@ -120,11 +157,14 @@ pub trait RoomState<E>:
 
     fn keys(&self) -> Vec<(&str, &str)>;
 
-    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + 'a>;
+    fn values<'a>(&'a self) -> Box<dyn Iterator<Item = &'a E> + Send + 'a>;
 
     fn iter<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a>;
+
+    fn metadata(&self) -> &StateMetadata;
+    fn mark_persisted(&mut self, sg: usize);
 }
 
 pub trait AuthRules {

@@ -244,11 +244,11 @@ where
 pub trait StateStore<R: RoomVersion, S: RoomState<String>>:
     Send + Sync + 'static
 {
-    fn insert_state(
-        &self,
+    fn insert_state<'a>(
+        &'a self,
         event: &R::Event,
-        state: S,
-    ) -> BoxFuture<Result<(), Error>>;
+        state: &'a mut S,
+    ) -> BoxFuture<'a, Result<(), Error>>;
 
     fn get_state_before(
         &self,

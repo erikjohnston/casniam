@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 
 use crate::protocol::events::EventBuilder;
 use crate::protocol::{
-    DagChunkFragment, Event, Handler, PersistEventInfo, RoomVersion,
+    DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
     RoomVersion3, RoomVersion4, RoomVersion5,
 };
-use crate::state_map::StateMap;
 use crate::stores::StoreFactory;
+use crate::StateMapWithData;
 
 use super::*;
 
@@ -27,7 +27,7 @@ fn to_value(
 pub trait Hooks: Sync + Send + 'static {
     fn on_new_events<R: RoomVersion>(
         &self,
-        _infos: &[PersistEventInfo<R, StateMap<String>>],
+        _infos: &[PersistEventInfo<R, StateMapWithData<String>>],
     ) -> BoxFuture<FederationResult<()>> {
         async { Ok(()) }.boxed()
     }
@@ -49,7 +49,7 @@ pub struct StandardFederationAPI<F, H = ()> {
     key_id: String,
     secret_key: SecretKey,
     hooks: H,
-    handler: Handler<StateMap<String>, F>,
+    handler: Handler<StateMapWithData<String>, F>,
 }
 
 impl<F, H> StandardFederationAPI<F, H> {
@@ -57,14 +57,19 @@ impl<F, H> StandardFederationAPI<F, H> {
         &self.hooks
     }
 
-    pub fn handler(&self) -> &Handler<StateMap<String>, F> {
+    pub fn handler(&self) -> &Handler<StateMapWithData<String>, F> {
         &self.handler
     }
 }
 
 impl<F, H> FederationAPI for StandardFederationAPI<F, H>
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    F: StoreFactory<StateMapWithData<String>>
+        + Sized
+        + Send
+        + Sync
+        + Clone
+        + 'static,
     H: Hooks,
 {
     fn on_make_join<R: RoomVersion>(
@@ -175,7 +180,7 @@ where
                 );
 
                 state_store
-                    .insert_state(&info.event, info.state_before.clone())
+                    .insert_state(&info.event, &mut info.state_before)
                     .await?;
 
                 room_store.insert_new_event(info.event.clone()).await?;
@@ -291,7 +296,12 @@ where
 
 impl<F, H> StandardFederationAPI<F, H>
 where
-    F: StoreFactory<StateMap<String>> + Sized + Send + Sync + Clone + 'static,
+    F: StoreFactory<StateMapWithData<String>>
+        + Sized
+        + Send
+        + Sync
+        + Clone
+        + 'static,
     H: Hooks,
 {
     pub fn new(
@@ -300,7 +310,7 @@ where
         key_id: String,
         secret_key: SecretKey,
         hooks: H,
-        handler: Handler<StateMap<String>, F>,
+        handler: Handler<StateMapWithData<String>, F>,
     ) -> StandardFederationAPI<F, H> {
         StandardFederationAPI {
             stores,
@@ -346,7 +356,7 @@ where
                 continue;
             }
 
-            let stuff = self
+            let mut stuff = self
                 .handler
                 .handle_new_timeline_events::<R>(
                     origin,
@@ -355,9 +365,9 @@ where
                 )
                 .await?;
 
-            for info in &stuff {
+            for info in &mut stuff {
                 state_store
-                    .insert_state(&info.event, info.state_before.clone())
+                    .insert_state(&info.event, &mut info.state_before)
                     .await?;
             }
 
