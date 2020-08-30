@@ -131,7 +131,7 @@ impl Event for SignedEventV3 {
     }
 
     fn redacts(&self) -> Option<&str> {
-        todo!() // FIXME
+        self.signed.as_ref().redacts()
     }
 
     fn room_id(&self) -> &str {

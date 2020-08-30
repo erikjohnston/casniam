@@ -29,6 +29,10 @@ where
         states: Vec<S>,
         store: &(impl EventStore<R> + Clone),
     ) -> BoxFuture<Result<S, Error>> {
+        if states.len() == 1 {
+            return futures::future::ok(states[0].clone()).boxed();
+        }
+
         let store = store.clone();
         async move {
             let (

@@ -59,7 +59,7 @@ where
     .check()
 }
 
-struct Checker<'a, E: Clone + fmt::Debug> {
+struct Checker<'a, E: Clone + fmt::Debug + 'static> {
     event: &'a E,
     auth_events: StateMap<E>,
 }
@@ -97,6 +97,8 @@ where
                 state_key == sender_domain,
                 "alias state key and sender domain do not match"
             );
+
+            return Ok(());
         }
 
         if self.event.event_type() == "m.room.member" {
@@ -468,9 +470,11 @@ where
         }
 
         if let Some(redacts) = self.event.redacts() {
-            if get_domain_from_id(redacts)?
-                == get_domain_from_id(self.event.sender())?
-            {
+            if let Ok(domain) = get_domain_from_id(redacts) {
+                if domain == get_domain_from_id(self.event.sender())? {
+                    return Ok(());
+                }
+            } else {
                 return Ok(());
             }
         }

@@ -28,6 +28,8 @@ pub struct EventV2 {
     event_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     state_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redacts: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,6 +203,10 @@ impl EventV2 {
     pub fn state_key(&self) -> Option<&str> {
         self.state_key.as_ref().map(|e| e as &str)
     }
+
+    pub fn redacts(&self) -> Option<&str> {
+        self.redacts.as_ref().map(|e| e as &str)
+    }
 }
 
 impl Event for SignedEventV2 {
@@ -243,7 +249,7 @@ impl Event for SignedEventV2 {
     }
 
     fn redacts(&self) -> Option<&str> {
-        todo!() // FIXME
+        self.signed.as_ref().redacts()
     }
 
     fn room_id(&self) -> &str {

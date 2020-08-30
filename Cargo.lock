@@ -418,6 +418,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "bitmaps"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031043d04099746d8db04daf1fa424b2bc8bd69d92b25962dcde24da39ab64a2"
+dependencies = [
+ "typenum",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,6 +497,8 @@ dependencies = [
  "http",
  "hyper",
  "hyper-tls",
+ "im",
+ "indicatif",
  "indolentjson",
  "log",
  "mockall",
@@ -506,6 +517,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-tls",
  "trust-dns-resolver 0.19.5",
+ "unescape",
 ]
 
 [[package]]
@@ -569,6 +581,23 @@ dependencies = [
  "serde_json",
  "toml",
  "yaml-rust",
+]
+
+[[package]]
+name = "console"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0b1aacfaffdbff75be81c15a399b4bedf78aaefe840e8af1d299ac2ade885d2"
+dependencies = [
+ "encode_unicode",
+ "lazy_static",
+ "libc",
+ "regex",
+ "terminal_size",
+ "termios",
+ "unicode-width",
+ "winapi 0.3.9",
+ "winapi-util",
 ]
 
 [[package]]
@@ -661,6 +690,12 @@ name = "either"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd56b59865bce947ac5958779cfa508f6c3b9497cc762b7e24a12d11ccde2c4f"
+
+[[package]]
+name = "encode_unicode"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
 name = "encoding_rs"
@@ -1084,6 +1119,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "im"
+version = "15.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "111c1983f3c5bb72732df25cddacee9b546d08325fb584b5ebd38148be7b0246"
+dependencies = [
+ "bitmaps",
+ "rand_core",
+ "rand_xoshiro",
+ "sized-chunks",
+ "typenum",
+ "version_check",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1091,6 +1140,18 @@ checksum = "86b45e59b16c76b11bf9738fd5d38879d3bd28ad292d7b313608becb17ae2df9"
 dependencies = [
  "autocfg",
  "hashbrown",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7baab56125e25686df467fe470785512329883aab42696d661247aca2a2896e4"
+dependencies = [
+ "console",
+ "lazy_static",
+ "number_prefix",
+ "regex",
 ]
 
 [[package]]
@@ -1419,6 +1480,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "number_prefix"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17b02fc0ff9a9e4b35b3342880f48e896ebf69f2967921fe8646bf5b7125956a"
+
+[[package]]
 name = "object"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1709,6 +1776,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xoshiro"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9fcdd2e881d02f1d9390ae47ad8e5696a9e4be7b547a1da2afbc61973217004"
+dependencies = [
+ "rand_core",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1915,6 +1991,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa8f3741c7372e75519bd9346068370c9cdaabcc1f9599cbcf2a2719352286b7"
 
 [[package]]
+name = "sized-chunks"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ec31ceca5644fa6d444cc77548b88b67f46db6f7c71683b0f9336e671830d2f"
+dependencies = [
+ "bitmaps",
+ "typenum",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2021,6 +2107,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb6bfa289a4d7c5766392812c0a1f4c1ba45afa1ad47803c11e1f407d846d75f"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "terminal_size"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a14cd9f8c72704232f0bfc8455c0e861f0ad4eb60cc9ec8a170e231414c1e13"
+dependencies = [
+ "libc",
+ "winapi 0.3.9",
+]
+
+[[package]]
+name = "termios"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f0fcee7b24a25675de40d5bb4de6e41b0df07bc9856295e7e2b3a3600c400c2"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -2311,6 +2416,12 @@ name = "typenum"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373c8a200f9e67a0c95e62a4f52fbf80c23b4381c05a17845531982fa99e6b33"
+
+[[package]]
+name = "unescape"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccb97dac3243214f8d8507998906ca3e2e0b900bf9bf4870477f125b82e68f6e"
 
 [[package]]
 name = "unicode-bidi"

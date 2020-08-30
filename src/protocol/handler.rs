@@ -422,20 +422,20 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             let state_before: S =
                 R::State::resolve_state(states, &store).await?;
 
-            // TODO: Only fetch events we need. The tests need fixing first though.
-            // let auth_event_ids: Vec<_> = R::Auth::auth_types_for_event(
-            //     event.event_type(),
-            //     event.state_key(),
-            //     event.sender(),
-            //     event.content(),
-            // )
-            // .into_iter()
-            // .filter_map(|(typ, state_key)| state_before.get(typ, state_key))
-            // .map(|e| e as &str)
-            // .collect();
+            let auth_types = R::Auth::auth_types_for_event(
+                event.event_type(),
+                event.state_key(),
+                event.sender(),
+                event.content(),
+            );
 
-            let state_event_ids: Vec<_> =
-                state_before.values().map(|v| v as &str).collect();
+            let state_event_ids: Vec<_> = auth_types
+                .iter()
+                .filter_map(|key| {
+                    state_before.get(&key.0 as &str, &key.1 as &str)
+                })
+                .map(|s| s as &str)
+                .collect();
 
             let auth_events = store.get_events(&state_event_ids).await?;
             let auth_state: StateMap<R::Event> = auth_events
@@ -719,6 +719,7 @@ mod tests {
         #[serde(rename = "type")]
         etype: String,
         state_key: Option<String>,
+        content: serde_json::Map<String, Value>,
     }
 
     impl Event for TestEvent {
@@ -739,7 +740,7 @@ mod tests {
         }
 
         fn content(&self) -> &serde_json::Map<String, Value> {
-            unimplemented!()
+            &self.content
         }
 
         fn depth(&self) -> i64 {
@@ -755,7 +756,7 @@ mod tests {
         }
 
         fn sender(&self) -> &str {
-            unimplemented!()
+            "@foo:bar"
         }
 
         fn auth_event_ids(&self) -> Vec<&str> {
@@ -792,18 +793,21 @@ mod tests {
                 prev_events: vec!["A".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
         ];
 
@@ -830,18 +834,21 @@ mod tests {
                 prev_events: vec!["B".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
         ];
 
@@ -890,7 +897,7 @@ mod tests {
             _sender: &str,
             _content: &serde_json::Map<String, Value>,
         ) -> Vec<(String, String)> {
-            unimplemented!()
+            Vec::new()
         }
     }
 
@@ -926,24 +933,28 @@ mod tests {
                 prev_events: vec![],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "B".to_string(),
                 prev_events: vec!["A".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "C".to_string(),
                 prev_events: vec!["B".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
             TestEvent {
                 event_id: "D".to_string(),
                 prev_events: vec!["C".to_string()],
                 etype: "type".to_string(),
                 state_key: None,
+                content: serde_json::Map::new(),
             },
         ];
 

@@ -1,5 +1,6 @@
+use im::{hashmap::Entry, HashMap};
+
 use std::borrow::Borrow;
-use std::collections::{hash_map, HashMap};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 use std::str::FromStr;
@@ -381,14 +382,14 @@ where
         if s == "" {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 match self.well_known.entry(key) {
-                    hash_map::Entry::Occupied(o) => {
+                    Entry::Occupied(o) => {
                         if o.get() != value {
                             return Some(o.remove());
                         } else {
                             return None;
                         }
                     }
-                    hash_map::Entry::Vacant(v) => {
+                    Entry::Vacant(v) => {
                         v.insert(value.clone());
                         return None;
                     }
@@ -406,36 +407,34 @@ where
             _ => None,
         } {
             match entry {
-                hash_map::Entry::Occupied(o) => {
+                Entry::Occupied(o) => {
                     if o.get() != value {
                         Some(o.remove())
                     } else {
                         None
                     }
                 }
-                hash_map::Entry::Vacant(v) => {
+                Entry::Vacant(v) => {
                     v.insert(value.clone());
                     None
                 }
             }
         } else {
             match self.others.entry(t.into()) {
-                hash_map::Entry::Occupied(mut o) => {
-                    match o.get_mut().entry(s.into()) {
-                        hash_map::Entry::Occupied(o) => {
-                            if o.get() != value {
-                                Some(o.remove())
-                            } else {
-                                None
-                            }
-                        }
-                        hash_map::Entry::Vacant(v) => {
-                            v.insert(value.clone());
+                Entry::Occupied(mut o) => match o.get_mut().entry(s.into()) {
+                    Entry::Occupied(o) => {
+                        if o.get() != value {
+                            Some(o.remove())
+                        } else {
                             None
                         }
                     }
-                }
-                hash_map::Entry::Vacant(v) => {
+                    Entry::Vacant(v) => {
+                        v.insert(value.clone());
+                        None
+                    }
+                },
+                Entry::Vacant(v) => {
                     v.insert(HashMap::new()).insert(s.into(), value.clone());
                     None
                 }
@@ -508,7 +507,7 @@ where
 
 impl<E> IntoIterator for StateMap<E>
 where
-    E: Debug + Send + Clone + 'static,
+    E: Debug + Send + Clone + Sync + 'static,
 {
     type Item = ((String, String), E);
     type IntoIter = Box<dyn Iterator<Item = Self::Item> + Send>;

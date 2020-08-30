@@ -37,6 +37,9 @@ tokio-postgres = "0.5.4"
 mockall = "0.7.1"
 clap = "2.33.1"
 config = "0.10.1"
+unescape = "0.1.0"
+indicatif = "0.15.0"
+im = "15.0.0"
 
 [dependencies.tokio]
 version = "0.2.21"
@@ -61,4 +64,8 @@ features = ["compat"]
 
 
 [profile.bench]
+debug = true
+
+
+[profile.release]
 debug = true

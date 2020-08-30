@@ -153,7 +153,7 @@ where
                 if let (Some(state), Some(event)) =
                     (store.state_map.get(*e_id), store.event_map.get(*e_id))
                 {
-                    let mut state_ids: S = state.clone().into_iter().collect();
+                    let mut state_ids: S = state.clone();
 
                     // Since we're getting the resolved state we need to add the
                     // event itself if its a state event.
