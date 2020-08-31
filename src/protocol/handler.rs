@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 
 use failure::Error;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Handler<S: RoomState<String>, F> {
     stores: F,
     client: client::HyperFederationClient,
@@ -32,6 +32,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         }
     }
 
+    #[tracing::instrument]
     pub async fn handle_new_timeline_events<R: RoomVersion>(
         &self,
         origin: &str,
@@ -58,6 +59,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         Ok(persist_infos)
     }
 
+    #[tracing::instrument]
     pub async fn check_signatures_and_hashes<R: RoomVersion>(
         &self,
         _events: &[R::Event],
@@ -68,6 +70,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
     /// Check that the given events pass auth based on their auth events. Also fetches any missing
     /// auth events.
+    #[tracing::instrument]
     pub async fn check_auth_auth_chain_and_persist<R: RoomVersion>(
         &self,
         origin: &str,
@@ -169,6 +172,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
     ///
     /// Returns the updated chunk and a map of the state after any missing
     /// events that are referenced.
+    #[tracing::instrument]
     pub async fn check_for_missing<R: RoomVersion>(
         &self,
         origin: &str,
@@ -367,6 +371,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         Ok((chunk, state_map))
     }
 
+    #[tracing::instrument]
     pub async fn handle_chunk<R: RoomVersion>(
         &self,
         chunk: DagChunkFragment<R::Event>,

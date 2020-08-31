@@ -4,8 +4,11 @@ use std::io::{BufRead, BufReader};
 use std::{fs::File, str::FromStr};
 
 use indicatif::{ProgressBar, ProgressStyle};
+use opentelemetry::{api::Provider, sdk};
 use serde::Deserialize;
 use sodiumoxide::crypto::sign;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
 
 use casniam::protocol::client::HyperFederationClient;
 use casniam::protocol::{Event, Handler, RoomVersion, RoomVersion5};
@@ -108,6 +111,33 @@ async fn main() -> std::io::Result<()> {
         config,
         tokio_postgres::NoTls,
     );
+
+    // Create a new tracer
+    let exporter = opentelemetry_jaeger::Exporter::builder()
+        .with_agent_endpoint("127.0.0.1:6831".parse().unwrap())
+        .with_process(opentelemetry_jaeger::Process {
+            service_name: "casniam_import_room".to_string(),
+            tags: Vec::new(),
+        })
+        .init()
+        .expect("Error initializing Jaeger exporter");
+
+    let provider = sdk::Provider::builder()
+        .with_simple_exporter(exporter)
+        .with_config(sdk::Config {
+            default_sampler: Box::new(sdk::Sampler::AlwaysOn),
+            ..Default::default()
+        })
+        .build();
+
+    let tracer = provider.get_tracer("casniam_import_room");
+
+    // Create a new OpenTelemetry tracing layer
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    let subscriber = Registry::default().with(telemetry);
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("global tracer init");
 
     let pool = match bb8::Pool::builder()
         .min_idle(Some(1))

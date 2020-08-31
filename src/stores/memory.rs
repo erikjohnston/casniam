@@ -5,9 +5,8 @@ use crate::stores::{
 use crate::StateMapWithData;
 
 use anymap::{any::Any, Map};
+use async_trait::async_trait;
 use failure::Error;
-use futures::future::BoxFuture;
-use futures::{future, FutureExt};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::default;
@@ -60,93 +59,86 @@ where
     }
 }
 
+#[async_trait]
 impl<R, S> EventStore<R> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
     S: RoomState<String>,
 {
-    fn insert_events(
-        &self,
-        events: Vec<R::Event>,
-    ) -> BoxFuture<Result<(), Error>> {
+    async fn insert_events(&self, events: Vec<R::Event>) -> Result<(), Error> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
         for event in events {
             store.event_map.insert(event.event_id().to_string(), event);
         }
 
-        future::ok(()).boxed()
+        Ok(())
     }
 
-    fn missing_events(
+    async fn missing_events(
         &self,
         event_ids: &[&str],
-    ) -> BoxFuture<Result<Vec<String>, Error>> {
+    ) -> Result<Vec<String>, Error> {
         let store = self.0.read().expect("Mutex poisoned");
 
-        future::ok(
-            event_ids
-                .iter()
-                .filter(|e| !store.event_map.contains_key(**e))
-                .map(|&e| e.to_string())
-                .collect(),
-        )
-        .boxed()
+        Ok(event_ids
+            .iter()
+            .filter(|e| !store.event_map.contains_key(**e))
+            .map(|&e| e.to_string())
+            .collect())
     }
 
-    fn get_events(
+    async fn get_events(
         &self,
         event_ids: &[&str],
-    ) -> BoxFuture<Result<Vec<R::Event>, Error>> {
+    ) -> Result<Vec<R::Event>, Error> {
         let store = self.0.read().expect("Mutex poisoned");
 
-        future::ok(
-            event_ids
-                .iter()
-                .filter_map(|e| store.event_map.get(*e))
-                .cloned()
-                .collect(),
-        )
-        .boxed()
+        Ok(event_ids
+            .iter()
+            .filter_map(|e| store.event_map.get(*e))
+            .cloned()
+            .collect())
     }
 }
 
+#[async_trait]
 impl<R, S> StateStore<R, S> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
     S: RoomState<String> + Send + Sync + 'static,
 {
-    fn insert_state<'a>(
+    async fn insert_state<'a>(
         &'a self,
         event: &R::Event,
         state: &'a mut S,
-    ) -> BoxFuture<'a, Result<(), Error>> {
+    ) -> Result<(), Error> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
         store
             .state_map
             .insert(event.event_id().to_string(), state.clone());
 
-        future::ok(()).boxed()
+        Ok(())
     }
 
-    fn get_state_before(
+    async fn get_state_before(
         &self,
         event_id: &str,
-    ) -> BoxFuture<Result<Option<S>, Error>> {
+    ) -> Result<Option<S>, Error> {
         let store = self.0.read().expect("Mutex poisoned");
 
         let state = store.state_map.get(event_id).cloned();
 
-        future::ok(state).boxed()
+        Ok(state)
     }
 
-    fn get_state_after(
+    async fn get_state_after(
         &self,
         event_ids: &[&str],
-    ) -> BoxFuture<Result<Option<S>, Error>> {
+    ) -> Result<Option<S>, Error> {
         let mut states: Vec<S> = Vec::with_capacity(event_ids.len());
 
         {
@@ -170,32 +162,30 @@ where
                     states.push(state_ids);
                 } else {
                     // We don't have all the state.
-                    return future::ok(None).boxed();
+                    return Ok(None);
                 }
             }
         }
 
         let store = self.clone();
 
-        async move {
-            let state = R::State::resolve_state(states, &store).await?;
+        let state = R::State::resolve_state(states, &store).await?;
 
-            Ok(Some(state))
-        }
-        .boxed()
+        Ok(Some(state))
     }
 }
 
+#[async_trait]
 impl<R, S> RoomStore<R::Event> for MemoryEventStore<R, S>
 where
     R: RoomVersion + 'static,
     R::Event: 'static,
     S: RoomState<String> + 'static,
 {
-    fn insert_new_events(
+    async fn insert_new_events(
         &self,
         events: Vec<R::Event>,
-    ) -> BoxFuture<Result<(), Error>> {
+    ) -> Result<(), Error> {
         let mut store = self.0.write().expect("Mutex poisoned");
 
         for event in events {
@@ -229,13 +219,13 @@ where
             store.event_map.insert(event.event_id().to_string(), event);
         }
 
-        future::ok(()).boxed()
+        Ok(())
     }
 
-    fn get_forward_extremities(
+    async fn get_forward_extremities(
         &self,
         room_id: String,
-    ) -> BoxFuture<Result<BTreeSet<String>, Error>> {
+    ) -> Result<BTreeSet<String>, Error> {
         let store = self.0.read().expect("Mutex poisoned");
 
         let extrems = store
@@ -244,7 +234,7 @@ where
             .cloned()
             .unwrap_or_default();
 
-        future::ok(extrems).boxed()
+        Ok(extrems)
     }
 }
 
@@ -253,24 +243,25 @@ pub struct MemoryRoomVersionStore {
     room_version_map: RwLock<BTreeMap<String, &'static str>>,
 }
 
+#[async_trait]
 impl RoomVersionStore for MemoryRoomVersionStore {
-    fn get_room_version(
+    async fn get_room_version(
         &self,
         room_id: &str,
-    ) -> BoxFuture<Result<Option<&'static str>, Error>> {
+    ) -> Result<Option<&'static str>, Error> {
         let map = self.room_version_map.read().expect("room version map");
 
-        future::ok(map.get(room_id).copied()).boxed()
+        Ok(map.get(room_id).copied())
     }
 
-    fn set_room_version(
-        &self,
-        room_id: &str,
+    async fn set_room_version<'a>(
+        &'a self,
+        room_id: &'a str,
         version: &'static str,
-    ) -> BoxFuture<Result<(), Error>> {
+    ) -> Result<(), Error> {
         let mut map = self.room_version_map.write().expect("room version map");
         map.insert(room_id.to_string(), version);
-        future::ok(()).boxed()
+        Ok(())
     }
 }
 

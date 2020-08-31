@@ -8,7 +8,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
 use serde_json::json;
 
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::{pin::Pin, sync::Arc};
 
 use crate::json::signed::Signed;
@@ -374,6 +374,17 @@ impl HyperFederationClient {
             r#"X-Matrix origin={},key="{}",sig="{}""#,
             &self.server_name, &self.key_name, b64_sig,
         )
+    }
+}
+
+impl Debug for HyperFederationClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HyperFederationClient")
+            .field("server_name", &self.server_name)
+            .field("key_name", &self.key_name)
+            .field("client", &"...")
+            .field("secret_key", &"...")
+            .finish()
     }
 }
 
