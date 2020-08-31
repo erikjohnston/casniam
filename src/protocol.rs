@@ -12,7 +12,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::fmt::Debug;
 use std::iter::FromIterator;
-use std::pin::Pin;
+use std::{collections::BTreeSet, pin::Pin};
 
 use failure::Error;
 
@@ -96,7 +96,7 @@ pub enum StateMetadata {
     Persisted(usize),
     Delta {
         prev: usize,
-        deltas: Vec<(String, String)>,
+        deltas: BTreeSet<(String, String)>,
     },
     New,
 }
@@ -105,13 +105,12 @@ impl StateMetadata {
     pub fn changed(&mut self, etype: &str, state_key: &str) {
         match self {
             &mut StateMetadata::Persisted(sg) => {
-                *self = StateMetadata::Delta {
-                    prev: sg,
-                    deltas: vec![(etype.to_string(), state_key.to_string())],
-                };
+                let mut deltas = BTreeSet::new();
+                deltas.insert((etype.to_string(), state_key.to_string()));
+                *self = StateMetadata::Delta { prev: sg, deltas };
             }
             StateMetadata::Delta { prev: _, deltas } => {
-                deltas.push((etype.to_string(), state_key.to_string()));
+                deltas.insert((etype.to_string(), state_key.to_string()));
             }
             StateMetadata::New => {}
         }

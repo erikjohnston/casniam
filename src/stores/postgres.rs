@@ -228,23 +228,42 @@ where
                 )
                 .await?;
 
-                let insert_stmt = txn.prepare(
-                    r#"INSERT INTO state (state_group, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#)
-                .await?;
-
                 // We need to pull the args into a Vec so that they live long enough
                 // (i.e. after the loop), as we don't `await` within the loop so
                 // args get dropped.
                 //
                 // Annoyingly we have to box these as the types don't match
-                let args: Vec<_> = state.iter()
-                    .map(|((typ, state_key), state_id)| [
-                        Box::new(state_group) as Box<dyn ToSql + Send + Sync>,
-                        Box::new(typ),
-                        Box::new(state_key),
-                        Box::new(state_id),
-                    ])
-                    .collect();
+                let mut args_iter: Box<dyn Iterator<Item=_> + Send> = Box::new(state.iter().map(|(key, value)| (key, Some(value))));
+
+                if let StateMetadata::Delta { prev, deltas } = state.metadata() {
+                    txn.execute(
+                        r#"
+                            INSERT INTO state_group_sets (state_group, sets)
+                                SELECT $1, array_append(
+                                    (SELECT COALESCE(sets, '{}') FROM state_group_sets WHERE state_group = $2),
+                                    $2
+                                )
+                        "#,
+                        &[&state_group, &(*prev as i64)],
+                    )
+                    .await?;
+
+                    args_iter = Box::new(
+                        deltas.iter()
+                        .map(|(t, s)| ( (t as &str, s as &str), state.get(t as &str, s as &str)))
+                    );
+                }
+
+                let insert_stmt = txn.prepare(
+                    r#"INSERT INTO state (state_group, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#)
+                .await?;
+
+                let args:Vec<_> = args_iter.map(|((typ, state_key), state_id)| [
+                    Box::new(state_group) as Box<dyn ToSql + Send + Sync>,
+                    Box::new(typ),
+                    Box::new(state_key),
+                    Box::new(state_id),
+                ]).collect();
 
                 let mut futs = Vec::new();
                 for arg in &args {
@@ -332,17 +351,20 @@ where
                 .query(
                     r#"
                         WITH state_groups AS (
-                            SELECT event_id, state_group FROM event_to_state_group
+                            SELECT event_id, state_group as root_sg, unnest(array_append(sets, state_group)) as state_group
+                            FROM event_to_state_group AS sg
+                            LEFT JOIN state_group_sets USING (state_group)
                             WHERE event_id = ANY($1)
                         )
-                        SELECT event_id, type, state_key, state_event_id, state_group, 1 AS ordering
+                        SELECT event_id, type, state_key, state_event_id, root_sg, 1 AS ordering
                             FROM state
                             INNER JOIN state_groups USING (state_group)
                         UNION
                         SELECT event_id, type, state_key, state_event_id, state_group, 2 AS ordering
                             FROM state_after
-                            INNER JOIN state_groups USING (state_group)
-                        ORDER BY ordering ASC
+                            INNER JOIN event_to_state_group USING (state_group)
+                            WHERE event_id = ANY($1)
+                        ORDER BY root_sg, ordering ASC
                     "#,
                     &[&event_ids],
                 )
@@ -354,12 +376,16 @@ where
                 let event_id: String = row.get(0);
                 let typ: String = row.get(1);
                 let state_key: String = row.get(2);
-                let state_event_id: String = row.get(3);
+                let state_event_id: Option<String> = row.get(3);
                 let state_group: i64 = row.get(4);
                 let ordering: i32 = row.get(5);
 
                 let s = states.entry(event_id.clone()).or_default();
-                s.add_event(typ, state_key, state_event_id);
+                if let Some(state_event_id) = state_event_id {
+                    s.add_event(typ, state_key, state_event_id);
+                } else {
+                    s.remove(&typ, &state_key);
+                }
 
                 // If ordering is 1 then we're still adding events as part of
                 // the state group, so we reset the persisted flag.
