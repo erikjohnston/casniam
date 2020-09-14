@@ -338,8 +338,6 @@ where
         }
 
         let room_store = self.stores.get_room_store::<R>();
-        let _event_store = self.stores.get_event_store::<R>();
-        let state_store = self.stores.get_state_store::<R>();
 
         let chunks = DagChunkFragment::from_events(events);
 
@@ -356,7 +354,7 @@ where
                 continue;
             }
 
-            let mut stuff = self
+            let stuff = self
                 .handler
                 .handle_new_timeline_events::<R>(
                     origin,
@@ -364,12 +362,6 @@ where
                     chunk.into_events(),
                 )
                 .await?;
-
-            for info in &mut stuff {
-                state_store
-                    .insert_state(&info.event, &mut info.state_before)
-                    .await?;
-            }
 
             room_store
                 .insert_new_events(

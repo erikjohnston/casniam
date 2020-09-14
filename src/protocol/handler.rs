@@ -155,7 +155,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             };
 
             if !rejected {
-                // TODO: We shouldn't need to clone here
+                // XXX: We shouldn't need to clone here
                 event_store.insert_event(event.clone()).await?;
                 allowed_events.push(event.clone());
             } else {

@@ -3,19 +3,22 @@
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
+use actix_web::{dev::Payload, FromRequest, HttpRequest};
 use failure::{format_err, Error};
 use futures::future::{BoxFuture, Ready};
 use futures::FutureExt;
 use log::{debug, error, info};
+use opentelemetry::{api::Provider, sdk};
 use percent_encoding::percent_decode_str;
-
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
 use sha2::Sha256;
 use sodiumoxide::crypto::sign;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
 
-use actix_web::{dev::Payload, FromRequest, HttpRequest};
+use casniam::actix_instrument_middleware::TracingTransform;
 use casniam::protocol::client::{
     HyperFederationClient, MemoryTransactionSender, TransactionSender,
 };
@@ -192,106 +195,6 @@ where
         + Clone
         + 'static,
 {
-    async fn send_some_events<R>(
-        self,
-        room_id: String,
-        remote: String,
-    ) -> Result<(), Error>
-    where
-        R: RoomVersion,
-        R::Event: Serialize,
-    {
-        let event_store = self.stores.get_event_store::<R>();
-        let state_store = self.stores.get_state_store::<R>();
-        let room_store = self.stores.get_room_store::<R>();
-
-        let creator = format!("@alice:{}", self.server_name);
-
-        let prev_events: Vec<_> = room_store
-            .get_forward_extremities(room_id.clone())
-            .await?
-            .into_iter()
-            .collect();
-
-        let mut event = EventBuilder::from_json(json!({
-            "room_id": room_id,
-            "sender": creator,
-            "type": "m.room.message",
-            "content": {
-                "msgtype": "m.text",
-                "body": "Hello! I don't actually have anything to say to you right now...",
-            },
-            "prev_events": prev_events,
-        }))?
-        .build(event_store.as_ref(), state_store.as_ref())
-        .await?;
-
-        event.sign(
-            self.server_name.clone(),
-            self.key_id.clone(),
-            &self.secret_key,
-        );
-
-        let mut state = state_store
-            .get_state_after(
-                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
-            )
-            .await?
-            .unwrap();
-
-        state_store.insert_state(&event, &mut state).await?;
-        event_store.insert_event(event.clone()).await?;
-        room_store.insert_new_event(event.clone()).await?;
-
-        info!("Sending 'hello' event to {}", remote);
-
-        self.federation_sender
-            .send_event::<R>(remote.clone(), event.clone())
-            .await?;
-
-        tokio::time::delay_for(std::time::Duration::from_secs(30)).await;
-
-        let prev_events = vec![event.event_id().to_string()];
-
-        let mut event = EventBuilder::from_json(json!({
-            "room_id": room_id,
-            "sender": &creator,
-            "type": "m.room.member",
-            "state_key": &creator,
-            "content": {
-                "membership": "leave",
-            },
-            "prev_events": prev_events,
-        }))?
-        .build(event_store.as_ref(), state_store.as_ref())
-        .await?;
-
-        event.sign(
-            self.server_name.clone(),
-            self.key_id.clone(),
-            &self.secret_key,
-        );
-
-        let mut state = state_store
-            .get_state_after(
-                &prev_events.iter().map(|e| e as &str).collect::<Vec<_>>(),
-            )
-            .await?
-            .unwrap();
-
-        state_store.insert_state(&event, &mut state).await?;
-        event_store.insert_event(event.clone()).await?;
-        room_store.insert_new_event(event.clone()).await?;
-
-        info!("Sending 'leave' event to {}", remote);
-
-        self.federation_sender
-            .send_event::<R>(remote, event)
-            .await?;
-
-        Ok(())
-    }
-
     /// Create a new chunk from a set of builders. Doesn't persist.
     async fn generate_chunk<
         R: RoomVersion + Send,
@@ -369,7 +272,7 @@ where
         R: RoomVersion,
         R::Event: Serialize,
     {
-        let event_store = self.stores.get_event_store::<R>();
+        // let event_store = self.stores.get_event_store::<R>();
         // let state_store = self.stores.get_state_store::<R>();
         let room_store = self.stores.get_room_store::<R>();
 
@@ -392,11 +295,11 @@ where
         //         .await?;
         // }
 
-        event_store
-            .insert_events(
-                stuff.iter().map(|info| info.event.clone()).collect(),
-            )
-            .await?;
+        // event_store
+        //     .insert_events(
+        //         stuff.iter().map(|info| info.event.clone()).collect(),
+        //     )
+        //     .await?;
 
         // TODO: Do we need to clone?
         room_store
@@ -659,7 +562,7 @@ where
                 "type": "m.room.message",
                 "content": {
                     "msgtype": "m.text",
-                    "body": "Are you there?",
+                    "body": "Hello!",
                 },
             }),
         ];
@@ -755,11 +658,7 @@ where
                 let user_id = percent_decode_str(&path.2).decode_utf8()?.into_owned();
                 let display_name = percent_decode_str(&path.3).decode_utf8()?.into_owned();
 
-                let room_version = app_data.clone().join_room(&destination, &room_id, &user_id, &display_name).await?;
-
-                route_room_version!(room_version, tokio::spawn(async move{
-                    app_data.send_some_events::<R>(room_id, destination).await.ok();
-                }));
+                app_data.clone().join_room(&destination, &room_id, &user_id, &display_name).await?;
 
                 Ok(actix_web::web::Json(json!({}))) as actix_web::Result<_>
             },
@@ -852,10 +751,6 @@ where
                                 .on_send_join::<R>(auth.origin, room_id.clone(), event)
                                 .await
                                 .unwrap(); // FIXME
-
-                            tokio::spawn(async move{
-                                app_data.send_some_events::<R>(room_id, event_origin).await.ok();
-                            });
 
                             serde_json::to_value(response).unwrap()
                         }
@@ -994,7 +889,8 @@ struct Key {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init();
+    tracing_log::env_logger::init();
+    // LogTracer::init().expect("logger");
     // let _guard = slog_envlogger::init().unwrap();
 
     // We need to import this due to clap::app_from_crate!.
@@ -1023,6 +919,36 @@ async fn main() -> std::io::Result<()> {
     let settings: Settings = settings.try_into().expect("invalid config");
 
     let server_name = settings.server_name.clone();
+
+    // Create a new tracer
+    let exporter = opentelemetry_jaeger::Exporter::builder()
+        .with_agent_endpoint("127.0.0.1:6831".parse().unwrap())
+        .with_process(opentelemetry_jaeger::Process {
+            service_name: "casniam".to_string(),
+            tags: Vec::new(),
+        })
+        .init()
+        .expect("Error initializing Jaeger exporter");
+
+    let provider = sdk::Provider::builder()
+        .with_simple_exporter(exporter)
+        .with_config(sdk::Config {
+            default_sampler: Box::new(sdk::Sampler::AlwaysOn),
+            ..Default::default()
+        })
+        .build();
+
+    let tracer = provider.get_tracer("casniam");
+
+    // Create a new OpenTelemetry tracing layer
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    let log_layer = tracing_subscriber::fmt::layer().with_ansi(false);
+
+    let subscriber = Registry::default().with(telemetry).with(log_layer);
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("global tracer init");
 
     let (pubkey, secret_key) = sign::keypair_from_seed(&settings.key.seed);
     let key_id = format!("ed25519:{}", settings.key.id);
@@ -1108,6 +1034,7 @@ async fn main() -> std::io::Result<()> {
         actix_web::App::new()
             .data(app_data.clone())
             .app_data(app_data.clone())
+            .wrap(TracingTransform)
             .wrap(actix_web::middleware::Logger::default())
             .configure(add_routes::<postgres::PostgresEventStore>)
     })

@@ -19,6 +19,7 @@ macro_rules! expect_or_err {
     };
 }
 
+pub mod actix_instrument_middleware;
 pub mod json;
 pub mod protocol;
 pub mod state_map;

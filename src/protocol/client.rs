@@ -14,6 +14,8 @@ use std::{pin::Pin, sync::Arc};
 use crate::json::signed::Signed;
 use crate::protocol::server_resolver::MatrixConnector;
 use crate::protocol::{Event, RoomVersion};
+use tracing::{field, instrument, Span};
+use tracing_futures::Instrument;
 
 pub fn enc<'a>(s: &'a str) -> impl Display + 'a {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
@@ -36,24 +38,29 @@ where
         request: Request<hyper::Body>,
     ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
     {
-        hyper::Client::request(self, request).err_into().boxed()
+        let method = request.method().clone();
+        let uri = request.uri().to_string();
+
+        hyper::Client::request(self, request)
+            .err_into()
+            .inspect_ok(|resp: &Response<hyper::Body>| {
+                Span::current().record("status", &resp.status().as_u16());
+            })
+            .inspect_err(|err: &Error| {
+                Span::current().record("error", &&err.to_string()[..]);
+            })
+            .instrument(tracing::info_span!(
+                "inbound_request",
+                method = method.as_str(),
+                uri = &uri as &str,
+                status = field::Empty,
+                error = field::Empty,
+            ))
+            .boxed()
     }
 }
 
 impl Requester for () {
-    fn request(
-        &self,
-        _request: Request<hyper::Body>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
-    {
-        futures::future::err(format_err!("HTTP client disabled")).boxed()
-    }
-}
-
-impl<R> Requester for &R
-where
-    R: Requester,
-{
     fn request(
         &self,
         _request: Request<hyper::Body>,
@@ -100,6 +107,7 @@ impl HyperFederationClient {
         }
     }
 
+    #[instrument(err, skip(self))]
     pub async fn get_event<R: RoomVersion>(
         &self,
         destination: &str,
@@ -153,6 +161,7 @@ impl HyperFederationClient {
         Ok(event)
     }
 
+    #[instrument(err, skip(self))]
     pub async fn make_join(
         &self,
         destination: &str,
@@ -164,7 +173,7 @@ impl HyperFederationClient {
         for v in valid_room_versions {
             query.push_str("ver=");
             query.push_str(*v);
-            query.push_str("&");
+            query.push('&');
         }
 
         query.pop(); // Remove the last '&'
@@ -207,6 +216,7 @@ impl HyperFederationClient {
         Ok(resp)
     }
 
+    #[instrument(err, skip(self))]
     pub async fn send_join<R: RoomVersion>(
         &self,
         destination: &str,
@@ -250,6 +260,7 @@ impl HyperFederationClient {
         Ok(resp)
     }
 
+    #[instrument(err, skip(self))]
     pub async fn get_missing_events<R: RoomVersion>(
         &self,
         destination: &str,
@@ -305,6 +316,7 @@ impl HyperFederationClient {
         Ok(resp.events)
     }
 
+    #[instrument(err, skip(self))]
     pub async fn get_state_ids(
         &self,
         destination: &str,
