@@ -592,8 +592,8 @@ struct Authenticate {
 
 impl FromRequest for Authenticate {
     type Config = ();
-    type Error = Error;
-    type Future = Ready<Result<Self, Error>>;
+    type Error = actix_web::Error;
+    type Future = Ready<Result<Self, actix_web::Error>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let res = req
@@ -611,7 +611,8 @@ impl FromRequest for Authenticate {
             })
             .map(|auth| Authenticate {
                 origin: auth.origin.to_string(),
-            });
+            })
+            .map_err(actix_web::error::ErrorInternalServerError);
 
         futures::future::ready(res)
     }
@@ -628,37 +629,41 @@ where
 {
     cfg.route(
         "/_matrix/key/v2/server",
-        actix_web::web::get().to(
-            |app_data: actix_web::web::Data<AppData<F>>| async move {
-                let body = app_data.key_server_servlet.make_body();
+        actix_web::web::get().to(|app_data: actix_web::web::Data<AppData<F>>| async move {
+            let body = app_data.key_server_servlet.make_body();
 
-                Ok(actix_web::web::Json(body)) as actix_web::Result<_>
-            },
-        ),
+            Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+        }),
     )
     .route(
         "/_matrix/key/v2/server/{key}",
-        actix_web::web::get().to(
-            |app_data: actix_web::web::Data<AppData<F>>| async move {
-                let body = app_data.key_server_servlet.make_body();
+        actix_web::web::get().to(|app_data: actix_web::web::Data<AppData<F>>| async move {
+            let body = app_data.key_server_servlet.make_body();
 
-                Ok(actix_web::web::Json(body)) as actix_web::Result<_>
-            },
-        ),
+            Ok(actix_web::web::Json(body)) as actix_web::Result<_>
+        }),
     )
     .route(
         "/join/{host}/{room}/{user}/{display_name}",
         actix_web::web::get().to(
-            |(app_data, path): (actix_web::web::Data<AppData<F>>, actix_web::web::Path<(String,String,String,String)>,)| async move {
+            |(app_data, actix_path): (
+                actix_web::web::Data<AppData<F>>,
+                actix_web::web::Path<(String, String, String, String)>,
+            )| async move {
+                let path = actix_path.into_inner();
 
                 let app_data: AppData<F> = app_data.as_ref().clone();
 
-                let destination =  percent_decode_str(&path.0).decode_utf8()?.into_owned();
+                let destination = percent_decode_str(&path.0).decode_utf8()?.into_owned();
                 let room_id = percent_decode_str(&path.1).decode_utf8()?.into_owned();
                 let user_id = percent_decode_str(&path.2).decode_utf8()?.into_owned();
                 let display_name = percent_decode_str(&path.3).decode_utf8()?.into_owned();
 
-                app_data.clone().join_room(&destination, &room_id, &user_id, &display_name).await?;
+                app_data
+                    .clone()
+                    .join_room(&destination, &room_id, &user_id, &display_name)
+                    .await
+                    .map_err(actix_web::error::ErrorInternalServerError)?;
 
                 Ok(actix_web::web::Json(json!({}))) as actix_web::Result<_>
             },
@@ -667,25 +672,29 @@ where
     .route(
         "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
         actix_web::web::get().to(
-            |(state, path, auth): (
+            |(state, actix_path, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 Authenticate,
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
+                    let path = actix_path.into_inner();
 
-                    let room_id =
-                        percent_decode_str(&path.0).decode_utf8()?.into_owned();
+                    let room_id = percent_decode_str(&path.0).decode_utf8()?.into_owned();
 
-                    let user_id =
-                        percent_decode_str(&path.1).decode_utf8()?.into_owned();
+                    let user_id = percent_decode_str(&path.1).decode_utf8()?.into_owned();
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data
+                        .stores
+                        .get_room_version_store()
+                        .get_room_version(&room_id)
+                        .await
+                        .map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
-                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"));
                     };
 
                     // TODO: Check if remote server supports room version via ?ver= params
@@ -694,11 +703,12 @@ where
                         room_version,
                         serde_json::to_value(
                             app_data
-                            .federation_api
-                            .on_make_join::<R>(auth.origin, room_id, user_id)
-                            .await
-                            .unwrap()
-                        ).unwrap() // FIXME
+                                .federation_api
+                                .on_make_join::<R>(auth.origin, room_id, user_id)
+                                .await
+                                .unwrap()
+                        )
+                        .unwrap() // FIXME
                     );
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
@@ -709,7 +719,7 @@ where
     .route(
         "/_matrix/federation/v2/send_join/{room_id}/{event_id}",
         actix_web::web::put().to(
-            |(state, path, body, auth): (
+            |(state, actix_path, body, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 actix_web::web::Json<serde_json::Value>,
@@ -717,44 +727,42 @@ where
             )| {
                 async move {
                     let app_data: AppData<F> = state.as_ref().clone();
+                    let path = actix_path.into_inner();
 
-                    let room_id =
-                        percent_decode_str(&path.0).decode_utf8()?.into_owned();
+                    let room_id = percent_decode_str(&path.0).decode_utf8()?.into_owned();
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data
+                        .stores
+                        .get_room_version_store()
+                        .get_room_version(&room_id)
+                        .await
+                        .map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
-                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"));
                     };
 
-                    let response = route_room_version!(
-                        room_version,
-                        {
-                            let event: <R as RoomVersion>::Event =
-                                serde_json::from_value(body.0)?;
+                    let response = route_room_version!(room_version, {
+                        let event: <R as RoomVersion>::Event = serde_json::from_value(body.0)?;
 
-                            let event_origin = event
-                                .sender()
-                                .splitn(2, ':')
-                                .last()
-                                .unwrap()
-                                .to_string();
+                        let event_origin =
+                            event.sender().splitn(2, ':').last().unwrap().to_string();
 
-                            app_data.federation_sender
-                                .send_event::<R>(event_origin.clone(), event.clone())
-                                .await
-                                .unwrap();
+                        app_data
+                            .federation_sender
+                            .send_event::<R>(event_origin.clone(), event.clone())
+                            .await
+                            .unwrap();
 
-                            let response = app_data
-                                .federation_api
-                                .on_send_join::<R>(auth.origin, room_id.clone(), event)
-                                .await
-                                .unwrap(); // FIXME
+                        let response = app_data
+                            .federation_api
+                            .on_send_join::<R>(auth.origin, room_id.clone(), event)
+                            .await
+                            .unwrap(); // FIXME
 
-                            serde_json::to_value(response).unwrap()
-                        }
-                    );
+                        serde_json::to_value(response).unwrap()
+                    });
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }
@@ -773,8 +781,7 @@ where
                 async move {
                     let app_data: &AppData<F> = &state;
 
-                    let transaction: TransactionRequest =
-                        serde_json::from_value(body.0)?;
+                    let transaction: TransactionRequest = serde_json::from_value(body.0)?;
 
                     app_data
                         .federation_api
@@ -806,19 +813,30 @@ where
                         state.server_name.clone(),
                     );
 
-                    if app_data.stores.get_room_version_store().get_room_version(&room_id).await.unwrap().is_none() {
+                    if app_data
+                        .stores
+                        .get_room_version_store()
+                        .get_room_version(&room_id)
+                        .await
+                        .unwrap()
+                        .is_none()
+                    {
                         // Now create the room if it doesn't exist.
                         app_data
                             .clone()
                             .generate_room::<RoomVersion4>(room_id.clone())
-                            .await?;
+                            .await
+                            .map_err(actix_web::error::ErrorInternalServerError)?;
                     }
 
-                    Ok(actix_web::web::Json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))) as actix_web::Result<_>
+                    Ok(actix_web::web::Json(
+                        json!({ "room_id": room_id, "servers": &[&app_data.server_name] }),
+                    )) as actix_web::Result<_>
                 }
             },
         ),
-    ).route(
+    )
+    .route(
         "/_matrix/federation/v1/backfill/{room_id}",
         actix_web::web::get().to(
             |(state, path, query, auth): (
@@ -829,7 +847,7 @@ where
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
-                    let room_id = path.0.clone();
+                    let room_id = path.into_inner().0;
 
                     let mut event_ids = Vec::new();
                     let mut limit = 100;
@@ -846,25 +864,27 @@ where
                         }
                     }
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data
+                        .stores
+                        .get_room_version_store()
+                        .get_room_version(&room_id)
+                        .await
+                        .map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
-                        return Err(actix_web::error::ErrorNotFound("Unknown room"))
+                        return Err(actix_web::error::ErrorNotFound("Unknown room"));
                     };
 
-                    let response = route_room_version!(
-                        room_version,
-                        {
-                            let response = app_data
-                                .federation_api
-                                .on_backfill::<R>(auth.origin, room_id, event_ids, limit)
-                                .await
-                                .unwrap(); // FIXME
+                    let response = route_room_version!(room_version, {
+                        let response = app_data
+                            .federation_api
+                            .on_backfill::<R>(auth.origin, room_id, event_ids, limit)
+                            .await
+                            .unwrap(); // FIXME
 
-                            serde_json::to_value(response).unwrap()
-                        }
-                    );
+                        serde_json::to_value(response).unwrap()
+                    });
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
                 }

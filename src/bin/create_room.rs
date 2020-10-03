@@ -508,8 +508,8 @@ struct Authenticate {
 
 impl FromRequest for Authenticate {
     type Config = ();
-    type Error = Error;
-    type Future = Ready<Result<Self, Error>>;
+    type Error = actix_web::Error;
+    type Future = Ready<Result<Self, actix_web::Error>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let res = req
@@ -527,7 +527,8 @@ impl FromRequest for Authenticate {
             })
             .map(|auth| Authenticate {
                 origin: auth.origin.to_string(),
-            });
+            })
+            .map_err(actix_web::error::ErrorInternalServerError);
 
         futures::future::ready(res)
     }
@@ -565,13 +566,14 @@ where
     .route(
         "/_matrix/federation/v1/make_join/{room_id}/{user_id}",
         actix_web::web::get().to(
-            |(state, path, auth): (
+            |(state, actix_path, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 Authenticate,
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
+                    let path = actix_path.into_inner();
 
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
@@ -579,7 +581,7 @@ where
                     let user_id =
                         percent_decode_str(&path.1).decode_utf8()?.into_owned();
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await.map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
@@ -607,7 +609,7 @@ where
     .route(
         "/_matrix/federation/v2/send_join/{room_id}/{event_id}",
         actix_web::web::put().to(
-            |(state, path, body, auth): (
+            |(state, actix_path, body, auth): (
                 actix_web::web::Data<AppData<F>>,
                 actix_web::web::Path<(String, String)>,
                 actix_web::web::Json<serde_json::Value>,
@@ -615,11 +617,12 @@ where
             )| {
                 async move {
                     let app_data: AppData<F> = state.as_ref().clone();
+                    let path = actix_path.into_inner();
 
                     let room_id =
                         percent_decode_str(&path.0).decode_utf8()?.into_owned();
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await.map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
@@ -713,7 +716,7 @@ where
                         app_data
                             .clone()
                             .generate_room::<RoomVersion4>(room_id.clone())
-                            .await?;
+                            .await.map_err(actix_web::error::ErrorInternalServerError)?;
                     }
 
                     Ok(actix_web::web::Json(json!({ "room_id": room_id, "servers": &[&app_data.server_name] }))) as actix_web::Result<_>
@@ -731,7 +734,7 @@ where
             )| {
                 async move {
                     let app_data: &AppData<F> = &state;
-                    let room_id = path.0.clone();
+                    let room_id = path.into_inner().0;
 
                     let mut event_ids = Vec::new();
                     let mut limit = 100;
@@ -748,7 +751,7 @@ where
                         }
                     }
 
-                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await?;
+                    let room_version_opt: Option<&'static str> = app_data.stores.get_room_version_store().get_room_version(&room_id).await.map_err(actix_web::error::ErrorInternalServerError)?;
                     let room_version = if let Some(room_version) = room_version_opt {
                         room_version
                     } else {
