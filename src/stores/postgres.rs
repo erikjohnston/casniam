@@ -202,6 +202,14 @@ where
                 )
                 .await?;
 
+            if let Some(state_key) = event_state_key {
+                txn.execute(
+                        r#"INSERT INTO state_after (state_group, type, state_key, state_event_id) VALUES ($1, $2, $3, $4)"#,
+                        &[&(*state_group as i64), &event_type, &state_key, &event_id],
+                    )
+                    .await?;
+            }
+
             txn.commit().await?;
         } else {
             let row = txn.query_one(

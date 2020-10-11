@@ -179,10 +179,6 @@ where
                     &self.secret_key,
                 );
 
-                state_store
-                    .insert_state(&info.event, &mut info.state_before)
-                    .await?;
-
                 room_store.insert_new_event(info.event.clone()).await?;
             }
 

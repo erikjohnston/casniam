@@ -289,18 +289,6 @@ where
             assert!(!info.rejected);
         }
 
-        // for info in &stuff {
-        //     state_store
-        //         .insert_state(&info.event, info.state_before.clone())
-        //         .await?;
-        // }
-
-        // event_store
-        //     .insert_events(
-        //         stuff.iter().map(|info| info.event.clone()).collect(),
-        //     )
-        //     .await?;
-
         // TODO: Do we need to clone?
         room_store
             .insert_new_events(
@@ -485,6 +473,7 @@ where
     async fn generate_room<R>(
         self,
         room_id: String,
+        room_alias: String,
     ) -> Result<Vec<PersistEventInfo<R, StateMapWithData<String>>>, Error>
     where
         R: RoomVersion + Send,
@@ -493,7 +482,6 @@ where
         let creator = format!("@alice:{}", &self.server_name);
 
         info!("Generating room for {}", room_id);
-
         let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
             .timestamp_millis() as u64;
 
@@ -552,7 +540,17 @@ where
                 "type": "m.room.join_rules",
                 "state_key": "",
                 "content": {
-                    "join_rule": "public",
+                    "join_rule": "invite",
+                },
+            }),
+            json!({
+                "room_id": &room_id,
+                "sender": &creator,
+                "origin_server_ts": yesterday,
+                "type": "m.room.canonical_alias",
+                "state_key": "",
+                "content": {
+                    "alias": room_alias,
                 },
             }),
             json!({
@@ -583,6 +581,62 @@ where
             .await?;
 
         Ok(stuff)
+    }
+
+    async fn make_join<R>(
+        self,
+        origin: String,
+        room_id: String,
+        user_id: String,
+    ) -> Result<serde_json::Value, Error>
+    where
+        R: RoomVersion + Send,
+        R::Event: Serialize + Send,
+    {
+        let creator = format!("@alice:{}", &self.server_name);
+
+        let chunk = self
+            .clone()
+            .generate_chunk::<R, _>(
+                room_id.clone(),
+                vec![EventBuilder::from_json(json!({
+                    "room_id": &room_id,
+                    "sender": &creator,
+                    "type": "m.room.member",
+                    "state_key": &user_id,
+                    "content": {
+                        "membership": "invite",
+                    },
+                }))
+                .expect("valid json")],
+            )
+            .await?;
+
+        let event = &chunk.events[0];
+
+        let resp = self
+            .client
+            .invite::<R>(&origin, &room_id, event, &[])
+            .await?;
+
+        info!("Event: {:?}", resp.event.state_key());
+
+        self.clone()
+            .handle_chunk::<R>(
+                &self.server_name,
+                &room_id,
+                DagChunkFragment::from_event(resp.event),
+            )
+            .await?;
+
+        let response = serde_json::to_value(
+            self.federation_api
+                .on_make_join::<R>(origin, room_id, user_id)
+                .await
+                .unwrap(),
+        )?;
+
+        Ok(response)
     }
 }
 
@@ -701,14 +755,7 @@ where
 
                     let response = route_room_version!(
                         room_version,
-                        serde_json::to_value(
-                            app_data
-                                .federation_api
-                                .on_make_join::<R>(auth.origin, room_id, user_id)
-                                .await
-                                .unwrap()
-                        )
-                        .unwrap() // FIXME
+                        app_data.clone().make_join::<R>(auth.origin, room_id, user_id).await.unwrap()
                     );
 
                     Ok(actix_web::web::Json(response)) as actix_web::Result<_>
@@ -824,7 +871,7 @@ where
                         // Now create the room if it doesn't exist.
                         app_data
                             .clone()
-                            .generate_room::<RoomVersion4>(room_id.clone())
+                            .generate_room::<RoomVersion4>(room_id.clone(), query.room_alias.clone())
                             .await
                             .map_err(actix_web::error::ErrorInternalServerError)?;
                     }

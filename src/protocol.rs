@@ -85,9 +85,9 @@ where
 pub trait RoomStateResolver {
     type RoomVersion: RoomVersion;
 
-    fn resolve_state<'a, S: RoomState<String>>(
+    fn resolve_state<S: RoomState<String>>(
         states: Vec<S>,
-        store: &'a (impl EventStore<Self::RoomVersion> + Clone),
+        store: &(impl EventStore<Self::RoomVersion> + Clone),
     ) -> BoxFuture<Result<S, Error>>;
 }
 

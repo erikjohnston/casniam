@@ -874,9 +874,9 @@ mod tests {
     impl RoomStateResolver for DummyState {
         type RoomVersion = DummyVersion;
 
-        fn resolve_state<'a, S: RoomState<String>>(
+        fn resolve_state<S: RoomState<String>>(
             _states: Vec<S>,
-            _store: &'a (impl EventStore<Self::RoomVersion> + Clone),
+            _store: &(impl EventStore<Self::RoomVersion> + Clone),
         ) -> BoxFuture<Result<S, Error>> {
             Box::pin(future::ok(S::new()))
         }

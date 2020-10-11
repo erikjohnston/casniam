@@ -71,6 +71,7 @@ where
                 peer = &peer as &str,
                 status = field::Empty,
                 error = field::Empty,
+                span.kind = "server",
             ));
 
         fut.boxed_local()

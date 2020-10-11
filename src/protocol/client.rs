@@ -17,7 +17,7 @@ use crate::protocol::{Event, RoomVersion};
 use tracing::{field, instrument, Span};
 use tracing_futures::Instrument;
 
-pub fn enc<'a>(s: &'a str) -> impl Display + 'a {
+pub fn enc(s: &str) -> impl Display + '_ {
     utf8_percent_encode(s, NON_ALPHANUMERIC)
 }
 
@@ -50,11 +50,12 @@ where
                 Span::current().record("error", &&err.to_string()[..]);
             })
             .instrument(tracing::info_span!(
-                "inbound_request",
+                "outbound_request",
                 method = method.as_str(),
                 uri = &uri as &str,
                 status = field::Empty,
                 error = field::Empty,
+                span.kind = "client",
             ))
             .boxed()
     }
@@ -251,6 +252,57 @@ impl HyperFederationClient {
 
         if !response.status().is_success() {
             bail!("Got {} response code for /send_join", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    /// Send an invite to the remote server to be signed. Callers should check
+    /// that the returned event passes signature checks and otherwise matches
+    /// the event given.
+    #[instrument(err, skip(self))]
+    pub async fn invite<R: RoomVersion>(
+        &self,
+        destination: &str,
+        room_id: &str,
+        event: &R::Event,
+        invite_room_state: &[&R::Event],
+    ) -> Result<InviteResponse<R>, Error> {
+        let path = format!(
+            "/_matrix/federation/v2/invite/{}/{}",
+            enc(room_id),
+            enc(event.event_id()),
+        );
+
+        // TODO: Add invite room state.
+        let payload = json!({ "event": &event, "room_version": R::VERSION, "invite_room_state": [] });
+
+        let auth_header =
+            self.make_auth_header("PUT", &path, destination, Some(&payload));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&payload)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /invite", response.status());
         }
 
         let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
@@ -516,4 +568,9 @@ pub struct MakeJoinResponse {
 pub struct SendJoinResponse<R: RoomVersion> {
     pub auth_chain: Vec<R::Event>,
     pub state: Vec<R::Event>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InviteResponse<R: RoomVersion> {
+    pub event: R::Event,
 }
