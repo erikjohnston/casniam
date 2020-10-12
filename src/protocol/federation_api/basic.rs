@@ -186,9 +186,8 @@ where
                 .on_send_join::<R>(event.sender().to_string())
                 .await?;
 
-            let state = expect_or_err!(
-                state_store.get_state_after(&[&event_id]).await?
-            );
+            let state =
+                expect_or_err!(state_store.get_state_before(&event_id).await?);
 
             let state_events = event_store
                 .get_events(
