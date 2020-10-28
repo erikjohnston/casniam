@@ -6,7 +6,7 @@ version = "0.1.0"
 
 [dependencies]
 base64 = "0.13.0"
-chrono = "0.4.15"
+chrono = "0.4.19"
 failure = "0.1.8"
 petgraph = "0.5.1"
 rand = "0.7.3"
@@ -15,40 +15,40 @@ smallvec = "1.4.2"
 sodiumoxide = "0.2.6"
 anymap = "0.12.1"
 openssl = "0.10.30"
-env_logger = "0.7.1"
+env_logger = "0.8.1"
 log = "0.4.11"
 #serde_urlencoded = "0.6.1"
 # tokio-timer = "0.2.13"
 trust-dns-resolver = "0.19.5"
 http = "0.2.1"
 tokio-tls = "0.3.1"
-hyper = "0.13.7"
+hyper = "0.13.8"
 hyper-tls = "0.4.3"
 native-tls = "0.2.4"
-futures-util = "0.3.5"
-bytes = "0.5.6"
+futures-util = "0.3.7"
+bytes = "0.6.0"
 percent-encoding = "2.1.0"
-serde_derive = "1.0.116"
+serde_derive = "1.0.117"
 actix-web = "3.1.0"
 actix-rt = "1.1.1"
 bb8 = "0.4.2"
 bb8-postgres = "0.4.0"
 tokio-postgres = "0.5.5"
-mockall = "0.8.1"
+mockall = "0.8.3"
 clap = "2.33.3"
 config = "0.10.1"
 unescape = "0.1.0"
 indicatif = "0.15.0"
 im = "15.0.0"
-lru_time_cache = "0.11.0"
-tracing = "0.1.19"
+lru_time_cache = "0.11.2"
+tracing = "0.1.21"
 tracing-futures = "0.2.4"
-tracing-opentelemetry = "0.7.0"
-tracing-subscriber = "0.2.12"
+tracing-opentelemetry = "0.8.0"
+tracing-subscriber = "0.2.14"
 opentelemetry = "0.8.0"
 jaeger = "0.0.0"
 opentelemetry-jaeger = "0.7.0"
-async-trait = "0.1.40"
+async-trait = "0.1.41"
 actix-service = "1.0.6"
 
 [dependencies.tokio]
@@ -60,16 +60,16 @@ git = "https://github.com/NegativeMjark/indolentjson-rust.git"
 
 [dependencies.serde_json]
 features = ["raw_value"]
-version = "1.0.57"
+version = "1.0.59"
 
 [dependencies.serde]
-version = "1.0.116"
+version = "1.0.117"
 features = ["derive"]
 
 
 [dependencies.futures]
 package = "futures"
-version = "0.3.5"
+version = "0.3.7"
 features = ["compat"]
 
 [dependencies.tracing-log]
