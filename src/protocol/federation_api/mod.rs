@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use failure::Error;
 use futures::future::BoxFuture;
 use serde::Serialize;
@@ -17,6 +19,19 @@ impl From<Error> for FederationAPIError {
         FederationAPIError::Error(err)
     }
 }
+
+impl Display for FederationAPIError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FederationAPIError::HttpResponse(r) => {
+                write!(f, "Federation error: Got response {}", r.status().as_u16())
+            }
+            FederationAPIError::Error(err) => write!(f, "Federation error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for FederationAPIError {}
 
 pub type FederationResult<T> = Result<T, FederationAPIError>;
 
@@ -50,30 +65,33 @@ pub trait FederationAPI {
     ) -> BoxFuture<FederationResult<TransactionResponse>>;
 }
 
-#[derive(Serialize)]
-pub struct MakeJoinResponse<E: Serialize> {
+#[derive(Serialize, Deserialize)]
+pub struct MakeJoinResponse<E> {
     room_version: &'static str,
     event: E,
 }
 
-#[derive(Serialize)]
-pub struct SendJoinResponse<E: Serialize> {
-    origin: String,
+#[derive(Serialize, Deserialize)]
+pub struct SendJoinResponse<E> {
     state: Vec<E>,
     auth_chain: Vec<E>,
 }
 
-#[derive(Serialize)]
-pub struct BackfillResponse<E: Serialize> {
+#[derive(Serialize, Deserialize)]
+pub struct BackfillResponse<E> {
     pdus: Vec<E>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionRequest {
-    pdus: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub pdus: Vec<serde_json::Value>,
+
+    #[serde(default)]
+    pub edus: Vec<serde_json::Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct TransactionResponse;
 
 pub struct AuthHeader<'a> {
@@ -118,10 +136,8 @@ pub fn parse_auth_header(header: &str) -> Option<AuthHeader> {
 
 #[test]
 fn test_parse_auth_header() {
-    let header = parse_auth_header(
-        r#"X-Matrix origin=foo.com,key="key_id",sig="some_signature""#,
-    )
-    .unwrap();
+    let header =
+        parse_auth_header(r#"X-Matrix origin=foo.com,key="key_id",sig="some_signature""#).unwrap();
 
     assert_eq!(header.origin, "foo.com");
     assert_eq!(header.key_id, "key_id");

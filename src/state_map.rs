@@ -129,7 +129,7 @@ where
     }
 
     pub fn get(&self, t: &str, s: &str) -> Option<&E> {
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 return self.get_well_known(key);
             }
@@ -147,7 +147,7 @@ where
     }
 
     pub fn get_mut(&mut self, t: &str, s: &str) -> Option<&mut E> {
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 return self.well_known.get_mut(&key);
             }
@@ -167,7 +167,7 @@ where
     }
 
     pub fn insert(&mut self, t: &str, s: &str, value: E) {
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 self.well_known.insert(key, value);
                 return;
@@ -192,7 +192,7 @@ where
     }
 
     pub fn remove(&mut self, t: &str, s: &str) {
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 self.well_known.remove(&key);
                 return;
@@ -344,7 +344,7 @@ where
     E: Debug + Clone + Default,
 {
     pub fn get_mut_or_default(&mut self, t: &str, s: &str) -> &mut E {
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 return self.well_known.entry(key).or_insert_with(E::default);
             }
@@ -379,7 +379,7 @@ where
         F: Borrow<E>,
     {
         let value = v.borrow();
-        if s == "" {
+        if s.is_empty() {
             if let Ok(key) = WellKnownEmptyKeys::from_str(t) {
                 match self.well_known.entry(key) {
                     Entry::Occupied(o) => {

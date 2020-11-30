@@ -3,21 +3,19 @@ use log::info;
 use serde_json::{json, Value};
 use sodiumoxide::crypto::sign::SecretKey;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::protocol::events::EventBuilder;
 use crate::protocol::{
-    DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion,
-    RoomVersion3, RoomVersion4, RoomVersion5,
+    DagChunkFragment, Event, Handler, PersistEventInfo, RoomState, RoomVersion, RoomVersion3,
+    RoomVersion4, RoomVersion5,
 };
 use crate::stores::StoreFactory;
 use crate::StateMapWithData;
 
 use super::*;
 
-fn to_value(
-    value: serde_json::Value,
-) -> serde_json::Map<String, serde_json::Value> {
+fn to_value(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     match value {
         serde_json::Value::Object(value) => value,
         _ => panic!("Expected json map"),
@@ -32,17 +30,14 @@ pub trait Hooks: Sync + Send + 'static {
         async { Ok(()) }.boxed()
     }
 
-    fn on_send_join<R: RoomVersion>(
-        &self,
-        _user_id: String,
-    ) -> BoxFuture<FederationResult<()>> {
+    fn on_send_join<R: RoomVersion>(&self, _user_id: String) -> BoxFuture<FederationResult<()>> {
         async { Ok(()) }.boxed()
     }
 }
 
 impl Hooks for () {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StandardFederationAPI<F, H = ()> {
     stores: F,
     server_name: String,
@@ -64,12 +59,7 @@ impl<F, H> StandardFederationAPI<F, H> {
 
 impl<F, H> FederationAPI for StandardFederationAPI<F, H>
 where
-    F: StoreFactory<StateMapWithData<String>>
-        + Sized
-        + Send
-        + Sync
-        + Clone
-        + 'static,
+    F: StoreFactory<StateMapWithData<String>> + Sized + Send + Sync + Clone + 'static,
     H: Hooks,
 {
     fn on_make_join<R: RoomVersion>(
@@ -139,9 +129,7 @@ where
 
         async move {
             if event.event_type() != "m.room.member" {
-                return Err(
-                    format_err!("Event is not a membership event").into()
-                );
+                return Err(format_err!("Event is not a membership event").into());
             }
 
             if event.state_key().is_none() {
@@ -154,20 +142,14 @@ where
                 .and_then(serde_json::Value::as_str)
                 != Some("join")
             {
-                return Err(
-                    format_err!("Event does not have membership join").into()
-                );
+                return Err(format_err!("Event does not have membership join").into());
             }
 
             let event_id = event.event_id().to_string();
 
             let mut stuff = self
                 .handler
-                .handle_new_timeline_events::<R>(
-                    &origin,
-                    &room_id,
-                    vec![event.clone()],
-                )
+                .handle_new_timeline_events::<R>(&origin, &room_id, vec![event.clone()])
                 .await?;
 
             for info in &mut stuff {
@@ -186,23 +168,17 @@ where
                 .on_send_join::<R>(event.sender().to_string())
                 .await?;
 
-            let state =
-                expect_or_err!(state_store.get_state_before(&event_id).await?);
+            let state = expect_or_err!(state_store.get_state_before(&event_id).await?);
 
             let state_events = event_store
-                .get_events(
-                    &state.values().map(|e| e as &str).collect::<Vec<_>>(),
-                )
+                .get_events(&state.values().map(|e| e as &str).collect::<Vec<_>>())
                 .await?;
 
             let auth_events = event_store
-                .get_auth_chain_ids(
-                    state.values().map(String::to_string).collect::<Vec<_>>(),
-                )
+                .get_auth_chain_ids(state.values().map(String::to_string).collect::<Vec<_>>())
                 .await?;
 
             Ok(SendJoinResponse {
-                origin: self.server_name.clone(),
                 state: state_events,
                 auth_chain: auth_events,
             })
@@ -237,16 +213,11 @@ where
         let version_store = self.stores.get_room_version_store();
 
         async move {
-            let mut version_to_event_map: BTreeMap<_, Vec<Value>> =
-                BTreeMap::new();
+            let mut version_to_event_map: BTreeMap<_, Vec<Value>> = BTreeMap::new();
 
             for event in txn.pdus {
-                if let Some(room_id) =
-                    event.get("room_id").and_then(Value::as_str)
-                {
-                    if let Some(room_version_id) =
-                        version_store.get_room_version(room_id).await?
-                    {
+                if let Some(room_id) = event.get("room_id").and_then(Value::as_str) {
+                    if let Some(room_version_id) = version_store.get_room_version(room_id).await? {
                         version_to_event_map
                             .entry(room_version_id)
                             .or_default()
@@ -262,22 +233,16 @@ where
             for (room_version_id, events) in version_to_event_map.into_iter() {
                 match room_version_id {
                     RoomVersion3::VERSION => {
-                        self.handle_incoming_events::<RoomVersion3>(
-                            &origin, events,
-                        )
-                        .await?
+                        self.handle_incoming_events::<RoomVersion3>(&origin, events)
+                            .await?
                     }
                     RoomVersion4::VERSION => {
-                        self.handle_incoming_events::<RoomVersion4>(
-                            &origin, events,
-                        )
-                        .await?
+                        self.handle_incoming_events::<RoomVersion4>(&origin, events)
+                            .await?
                     }
                     RoomVersion5::VERSION => {
-                        self.handle_incoming_events::<RoomVersion5>(
-                            &origin, events,
-                        )
-                        .await?
+                        self.handle_incoming_events::<RoomVersion5>(&origin, events)
+                            .await?
                     }
                     r => info!("Unrecognized room version: {}", r),
                 }
@@ -291,12 +256,7 @@ where
 
 impl<F, H> StandardFederationAPI<F, H>
 where
-    F: StoreFactory<StateMapWithData<String>>
-        + Sized
-        + Send
-        + Sync
-        + Clone
-        + 'static,
+    F: StoreFactory<StateMapWithData<String>> + Sized + Send + Sync + Clone + 'static,
     H: Hooks,
 {
     pub fn new(
@@ -351,17 +311,11 @@ where
 
             let stuff = self
                 .handler
-                .handle_new_timeline_events::<R>(
-                    origin,
-                    &room_id,
-                    chunk.into_events(),
-                )
+                .handle_new_timeline_events::<R>(origin, &room_id, chunk.into_events())
                 .await?;
 
             room_store
-                .insert_new_events(
-                    stuff.iter().map(|i| i.event.clone()).collect(),
-                )
+                .insert_new_events(stuff.iter().map(|i| i.event.clone()).collect())
                 .await?;
 
             self.hooks.on_new_events(&stuff).await?;
@@ -374,6 +328,68 @@ where
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// Handles the response to a send join.
+    pub async fn handle_join_room_version<R: RoomVersion>(
+        &self,
+        destination: &str,
+        event: R::Event,
+        response: SendJoinResponse<R::Event>,
+    ) -> Result<(), Error> {
+        // let event_store = self.stores.get_event_store::<R>();
+        // let state_store = self.stores.get_state_store::<R>();
+        let room_store = self.stores.get_room_store::<R>();
+        let room_version_store = self.stores.get_room_version_store();
+
+        let room_id = event.room_id();
+
+        room_version_store
+            .set_room_version(room_id, R::VERSION)
+            .await?;
+
+        let handler = self.handler();
+
+        let mut all_events = response.state.clone();
+        all_events.extend_from_slice(&response.auth_chain);
+        all_events.push(event.clone());
+
+        let len_all_events = all_events.len();
+
+        let persisted_events = handler
+            .check_auth_auth_chain_and_persist::<R>(destination, room_id, all_events)
+            .await?;
+
+        if persisted_events.len() != len_all_events {
+            todo!()
+        }
+
+        let mut event_to_state = HashMap::new();
+        for prev_event_id in event.prev_event_ids() {
+            event_to_state.insert(
+                prev_event_id.to_string(),
+                response
+                    .state
+                    .iter()
+                    .filter_map(|e| {
+                        e.state_key().map(|state_key| {
+                            (
+                                (e.event_type().to_string(), state_key.to_string()),
+                                e.event_id().to_string(),
+                            )
+                        })
+                    })
+                    .collect(),
+            );
+        }
+
+        handler
+            .handle_chunk::<R>(DagChunkFragment::from_event(event.clone()), event_to_state)
+            .await?;
+
+        room_store.insert_new_events(vec![event.clone()]).await?;
 
         Ok(())
     }

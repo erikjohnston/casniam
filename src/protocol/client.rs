@@ -6,9 +6,13 @@ use hyper::{Body, Request, Response};
 use mockall::automock;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rand::Rng;
-use serde_json::json;
+use serde::Serialize;
+use serde_json::{json, Value};
 
-use std::fmt::{Debug, Display};
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display},
+};
 use std::{pin::Pin, sync::Arc};
 
 use crate::json::signed::Signed;
@@ -36,8 +40,7 @@ where
     fn request(
         &self,
         request: Request<hyper::Body>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>> {
         let method = request.method().clone();
         let uri = request.uri().to_string();
 
@@ -65,8 +68,7 @@ impl Requester for () {
     fn request(
         &self,
         _request: Request<hyper::Body>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, Error>> + Send>> {
         futures::future::err(format_err!("HTTP client disabled")).boxed()
     }
 }
@@ -117,8 +119,7 @@ impl HyperFederationClient {
     ) -> Result<R::Event, Error> {
         let path = format!("/_matrix/federation/v1/event/{}", enc(event_id),);
 
-        let auth_header =
-            self.make_auth_header::<()>("GET", &path, destination, None);
+        let auth_header = self.make_auth_header::<()>("GET", &path, destination, None);
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -186,8 +187,7 @@ impl HyperFederationClient {
             query,
         );
 
-        let auth_header =
-            self.make_auth_header::<()>("GET", &path, destination, None);
+        let auth_header = self.make_auth_header::<()>("GET", &path, destination, None);
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -230,8 +230,7 @@ impl HyperFederationClient {
             enc(event.event_id()),
         );
 
-        let auth_header =
-            self.make_auth_header("PUT", &path, destination, Some(&event));
+        let auth_header = self.make_auth_header("PUT", &path, destination, Some(&event));
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -279,10 +278,10 @@ impl HyperFederationClient {
         );
 
         // TODO: Add invite room state.
-        let payload = json!({ "event": &event, "room_version": R::VERSION, "invite_room_state": [] });
+        let payload =
+            json!({ "event": &event, "room_version": R::VERSION, "invite_room_state": [] });
 
-        let auth_header =
-            self.make_auth_header("PUT", &path, destination, Some(&payload));
+        let auth_header = self.make_auth_header("PUT", &path, destination, Some(&payload));
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -320,10 +319,7 @@ impl HyperFederationClient {
         earliest_events: &[&str],
         latest_events: &[&str],
     ) -> Result<Vec<R::Event>, Error> {
-        let path = format!(
-            "/_matrix/federation/v1/get_missing_events/{}",
-            enc(room_id),
-        );
+        let path = format!("/_matrix/federation/v1/get_missing_events/{}", enc(room_id),);
 
         // TODO: Fill out min_depth
         let content = &json!({
@@ -333,8 +329,7 @@ impl HyperFederationClient {
             "latest_events": latest_events,
         });
 
-        let auth_header =
-            self.make_auth_header("POST", &path, destination, Some(&content));
+        let auth_header = self.make_auth_header("POST", &path, destination, Some(&content));
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -362,8 +357,7 @@ impl HyperFederationClient {
 
         let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
 
-        let resp: GetMissingEventsResponse<R::Event> =
-            serde_json::from_slice(&resp_bytes)?;
+        let resp: GetMissingEventsResponse<R::Event> = serde_json::from_slice(&resp_bytes)?;
 
         Ok(resp.events)
     }
@@ -381,8 +375,7 @@ impl HyperFederationClient {
             enc(event_id)
         );
 
-        let auth_header =
-            self.make_auth_header::<()>("GET", &path, destination, None);
+        let auth_header = self.make_auth_header::<()>("GET", &path, destination, None);
 
         let uri = hyper::Uri::builder()
             .scheme("matrix")
@@ -411,6 +404,197 @@ impl HyperFederationClient {
         let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
 
         let resp: GetStateIdsResponse = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    #[instrument(err, skip(self))]
+    pub async fn user_keys_query(
+        &self,
+        destination: &str,
+        device_keys: BTreeMap<String, Vec<String>>,
+    ) -> Result<UserQueryResult, Error> {
+        let path = "/_matrix/federation/v1/user/keys/query".to_string();
+
+        let content = &json!({
+            "device_keys": device_keys,
+        });
+
+        let auth_header = self.make_auth_header("POST", &path, destination, Some(&content));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::post(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&content)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!(
+                "Got {} response code for /user/keys/query",
+                response.status()
+            );
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    #[instrument(err, skip(self))]
+    pub async fn user_keys_claim(
+        &self,
+        destination: &str,
+        devices: BTreeMap<String, BTreeMap<String, String>>,
+    ) -> Result<UserKeysClaimResult, Error> {
+        let path = "/_matrix/federation/v1/user/keys/claim".to_string();
+
+        let content = &json!({
+            "one_time_keys": devices,
+        });
+
+        let auth_header = self.make_auth_header("POST", &path, destination, Some(&content));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::post(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&content)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!(
+                "Got {} response code for /user/keys/claim",
+                response.status()
+            );
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    #[instrument(err, skip(self))]
+    pub async fn send_edu(
+        &self,
+        destination: &str,
+        edu: impl Serialize + Debug,
+    ) -> Result<Value, Error> {
+        let mut rng = rand::thread_rng();
+        let txn_id: String = std::iter::repeat(())
+            .map(|()| rng.sample(rand::distributions::Alphanumeric))
+            .take(7)
+            .collect();
+        let path = format!("/_matrix/federation/v1/send/{}", txn_id);
+
+        let content = &json!({
+            "pdus": [],
+            "edus": [edu],
+            "origin": &self.server_name,
+            "origin_server_ts": 0,
+        });
+
+        let auth_header = self.make_auth_header("PUT", &path, destination, Some(&content));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&content)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /send", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
+
+        Ok(resp)
+    }
+
+    #[instrument(err, skip(self))]
+    pub async fn send_transaction(
+        &self,
+        destination: &str,
+        pdus: Vec<Value>,
+        edus: Vec<Value>,
+    ) -> Result<Value, Error> {
+        let mut rng = rand::thread_rng();
+        let txn_id: String = std::iter::repeat(())
+            .map(|()| rng.sample(rand::distributions::Alphanumeric))
+            .take(7)
+            .collect();
+        let path = format!("/_matrix/federation/v1/send/{}", txn_id);
+
+        let content = &json!({
+            "pdus": pdus,
+            "edus": edus,
+            "origin": &self.server_name,
+            "origin_server_ts": 0,
+        });
+
+        let auth_header = self.make_auth_header("PUT", &path, destination, Some(&content));
+
+        let uri = hyper::Uri::builder()
+            .scheme("matrix")
+            .authority(&destination as &str)
+            .path_and_query(&path as &str)
+            .build()?;
+
+        let request = hyper::Request::put(uri)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&content)?.into())?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format_err!("{}", e))?;
+
+        if !response.status().is_success() {
+            bail!("Got {} response code for /send", response.status());
+        }
+
+        let resp_bytes = hyper::body::to_bytes(response.into_body()).await?;
+
+        let resp = serde_json::from_slice(&resp_bytes)?;
 
         Ok(resp)
     }
@@ -573,4 +757,27 @@ pub struct SendJoinResponse<R: RoomVersion> {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InviteResponse<R: RoomVersion> {
     pub event: R::Event,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct UserQueryResult {
+    pub device_keys: BTreeMap<String, BTreeMap<String, Device>>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Device {
+    pub user_id: String,
+    pub device_id: String,
+    pub algorithms: Vec<String>,
+    pub keys: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+pub struct UserKeysClaimResult {
+    pub one_time_keys: BTreeMap<String, BTreeMap<String, BTreeMap<String, Signed<OneTimeKey>>>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct OneTimeKey {
+    pub key: String,
 }

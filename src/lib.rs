@@ -19,6 +19,40 @@ macro_rules! expect_or_err {
     };
 }
 
+/// Takes a `str` room version and calls the expression with a type alias `R` set
+/// to the appopriate type.
+#[macro_export]
+macro_rules! route_room_version {
+    ($ver:expr, $f:expr) => {
+        route_room_version!(
+            $ver,
+            $f,
+            actix_web::error::ErrorInternalServerError("Unknown version",)
+        )
+    };
+    ($ver:expr, $f:expr, $error:expr) => {
+        use casniam::protocol::{RoomVersion, RoomVersion3, RoomVersion4, RoomVersion5};
+
+        match $ver as &str {
+            RoomVersion3::VERSION => {
+                type R = RoomVersion3;
+                $f
+            }
+            RoomVersion4::VERSION => {
+                type R = RoomVersion4;
+                $f
+            }
+            RoomVersion5::VERSION => {
+                type R = RoomVersion5;
+                $f
+            }
+            _ => {
+                Err($error)?;
+            }
+        }
+    };
+}
+
 pub mod actix_instrument_middleware;
 pub mod json;
 pub mod protocol;
@@ -84,18 +118,11 @@ where
         self.map.remove(etype, state_key);
     }
 
-    fn get(
-        &self,
-        event_type: impl Borrow<str>,
-        state_key: impl Borrow<str>,
-    ) -> Option<&E> {
+    fn get(&self, event_type: impl Borrow<str>, state_key: impl Borrow<str>) -> Option<&E> {
         self.map.get(event_type.borrow(), state_key.borrow())
     }
 
-    fn get_event_ids(
-        &self,
-        types: impl IntoIterator<Item = (String, String)>,
-    ) -> Vec<E> {
+    fn get_event_ids(&self, types: impl IntoIterator<Item = (String, String)>) -> Vec<E> {
         types
             .into_iter()
             .filter_map(|(t, s)| self.map.get(&t, &s))
@@ -111,9 +138,7 @@ where
         Box::new(self.map.values())
     }
 
-    fn iter<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a> {
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = ((&'a str, &'a str), &'a E)> + Send + 'a> {
         Box::new(self.map.iter())
     }
 
@@ -130,9 +155,7 @@ impl<E> FromIterator<((String, String), E)> for StateMapWithData<E>
 where
     E: Clone + Debug + Send + Sync + 'static,
 {
-    fn from_iter<T: IntoIterator<Item = ((String, String), E)>>(
-        iter: T,
-    ) -> StateMapWithData<E> {
+    fn from_iter<T: IntoIterator<Item = ((String, String), E)>>(iter: T) -> StateMapWithData<E> {
         let map = iter.into_iter().collect();
 
         StateMapWithData {
@@ -146,9 +169,7 @@ impl<'a, E> FromIterator<((&'a str, &'a str), E)> for StateMapWithData<E>
 where
     E: Clone + Debug + Send + Sync + 'static,
 {
-    fn from_iter<T: IntoIterator<Item = ((&'a str, &'a str), E)>>(
-        iter: T,
-    ) -> StateMapWithData<E> {
+    fn from_iter<T: IntoIterator<Item = ((&'a str, &'a str), E)>>(iter: T) -> StateMapWithData<E> {
         let map = iter.into_iter().collect();
 
         StateMapWithData {
@@ -207,7 +228,4 @@ where
     }
 }
 
-impl<E> Eq for StateMapWithData<E> where
-    E: Eq + PartialEq + Clone + Debug + Send + Sync + 'static
-{
-}
+impl<E> Eq for StateMapWithData<E> where E: Eq + PartialEq + Clone + Debug + Send + Sync + 'static {}

@@ -1,6 +1,4 @@
-use crate::protocol::{
-    client, AuthRules, Event, RoomState, RoomStateResolver, RoomVersion,
-};
+use crate::protocol::{client, AuthRules, Event, RoomState, RoomStateResolver, RoomVersion};
 use crate::stores::backed::BackedStore;
 use crate::stores::{EventStore, StoreFactory};
 use crate::StateMapWithData;
@@ -49,8 +47,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let mut persist_infos = Vec::new();
         for chunk in chunks {
-            let (chunk, states) =
-                self.check_for_missing::<R>(origin, room_id, chunk).await?;
+            let (chunk, states) = self.check_for_missing::<R>(origin, room_id, chunk).await?;
 
             let mut persist_info = self.handle_chunk(chunk, states).await?;
             persist_infos.append(&mut persist_info);
@@ -88,8 +85,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .filter(|e| !events.iter().any(|ev| ev.event_id() == *e))
                 .collect();
 
-            let missing_events =
-                event_store.missing_events(&extremities).await?;
+            let missing_events = event_store.missing_events(&extremities).await?;
 
             if !missing_events.is_empty() {
                 Some(missing_events)
@@ -117,8 +113,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             // TODO: This will probably pull the same events out the DB each
             // loop, unless we've added some the previous iteration.
 
-            let auth_events =
-                event_store.get_events(&event.auth_event_ids()).await?;
+            let auth_events = event_store.get_events(&event.auth_event_ids()).await?;
             let event_map: HashMap<&str, &R::Event> = auth_events
                 .iter()
                 .chain(events.iter())
@@ -208,8 +203,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let set = room_store.get_forward_extremities(room.to_string()).await?;
 
-        let current_extremities: Vec<_> =
-            set.iter().map(|s| s as &str).collect();
+        let current_extremities: Vec<_> = set.iter().map(|s| s as &str).collect();
 
         let new_extremities: Vec<&str> = chunk
             .forward_extremities()
@@ -219,12 +213,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         let mut missing_events = self
             .client
-            .get_missing_events::<R>(
-                origin,
-                &room,
-                &current_extremities,
-                &new_extremities,
-            )
+            .get_missing_events::<R>(origin, &room, &current_extremities, &new_extremities)
             .await?;
 
         topological_sort(&mut missing_events);
@@ -239,11 +228,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
         // We need filter out invalid events now before we fetch the state.
         let missing_events = self
-            .check_auth_auth_chain_and_persist::<R>(
-                origin,
-                room_id,
-                missing_events,
-            )
+            .check_auth_auth_chain_and_persist::<R>(origin, room_id, missing_events)
             .await?;
 
         for event in missing_events.into_iter().rev() {
@@ -274,24 +259,16 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
             for event_id in unknown_events {
                 let mut new_events = Vec::new();
 
-                match self.client.get_event::<R>(origin, &room, &event_id).await
-                {
+                match self.client.get_event::<R>(origin, &room, &event_id).await {
                     Ok(event) => new_events.push(event),
                     Err(e) => {
-                        info!(
-                            "Failed to get missing prev event, bailing: {}",
-                            e
-                        );
-                        bail!(
-                            "Failed to get missing prev event, bailing: {}",
-                            e
-                        );
+                        info!("Failed to get missing prev event, bailing: {}", e);
+                        bail!("Failed to get missing prev event, bailing: {}", e);
                     }
                 };
 
                 // TODO: Handle these calls failing.
-                let state_response =
-                    self.client.get_state_ids(origin, &room, &event_id).await?;
+                let state_response = self.client.get_state_ids(origin, &room, &event_id).await?;
 
                 let state_ids: Vec<&str> = state_response
                     .auth_chain_ids
@@ -300,8 +277,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                     .map(|e| e as &str)
                     .collect();
 
-                let missing_events =
-                    event_store.missing_events(&state_ids).await?;
+                let missing_events = event_store.missing_events(&state_ids).await?;
 
                 // Fetch missing events.
                 for state_event_id in missing_events {
@@ -321,10 +297,8 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 // We sort these so that if there are any dependencies we handle
                 // them in the correct order.
                 topological_sort_by_func(&mut new_events, DagNode::auth_prev);
-                self.check_auth_auth_chain_and_persist::<R>(
-                    origin, room_id, new_events,
-                )
-                .await?;
+                self.check_auth_auth_chain_and_persist::<R>(origin, room_id, new_events)
+                    .await?;
 
                 // Figure out a way to not load all state events here.
                 let new_event = event_store
@@ -385,15 +359,12 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
         let event_store = stores.get_event_store::<R>();
         let state_store = stores.get_state_store::<R>();
 
-        // let missing = get_missing(&chunk.events);
         let missing = &chunk.backward_extremities;
 
         if !missing.is_empty() {
             // TODO: need to check we have state for this
             let unknown_events = event_store
-                .missing_events(
-                    &missing.iter().map(|e| e as &str).collect::<Vec<_>>(),
-                )
+                .missing_events(&missing.iter().map(|e| e as &str).collect::<Vec<_>>())
                 .await?;
 
             if !unknown_events.is_empty() {
@@ -424,8 +395,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                 .map(|e| event_to_state_after[e as &str].clone())
                 .collect();
 
-            let mut state_before: S =
-                R::State::resolve_state(states, &store).await?;
+            let mut state_before: S = R::State::resolve_state(states, &store).await?;
 
             let auth_types = R::Auth::auth_types_for_event(
                 event.event_type(),
@@ -436,9 +406,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
 
             let state_event_ids: Vec<_> = auth_types
                 .iter()
-                .filter_map(|key| {
-                    state_before.get(&key.0 as &str, &key.1 as &str)
-                })
+                .filter_map(|key| state_before.get(&key.0 as &str, &key.1 as &str))
                 .map(|s| s as &str)
                 .collect();
 
@@ -462,11 +430,7 @@ impl<S: RoomState<String>, F: StoreFactory<S> + Clone + 'static> Handler<S, F> {
                     false
                 }
                 Err(err) => {
-                    warn!(
-                        "Denied event {} because: {}",
-                        event.event_type(),
-                        err
-                    );
+                    warn!("Denied event {} because: {}", event.event_type(), err);
                     true
                 }
             };
@@ -579,14 +543,8 @@ where
 
     pub fn from_event(event: E) -> DagChunkFragment<E> {
         DagChunkFragment {
-            backward_extremities: event
-                .prevs()
-                .iter()
-                .map(|&e| e.to_string())
-                .collect(),
-            forward_extremities: vec![event.id().to_string()]
-                .into_iter()
-                .collect(),
+            backward_extremities: event.prevs().iter().map(|&e| e.to_string()).collect(),
+            forward_extremities: vec![event.id().to_string()].into_iter().collect(),
             event_ids: vec![event.id().to_string()].into_iter().collect(),
             events: vec![event],
         }
@@ -595,11 +553,9 @@ where
     /// Add an event to the chunk. Returns Err if the event isn't connected to
     /// the chunk.
     pub fn add_event(&mut self, event: E) -> Result<(), E> {
-        let backwards: Vec<_> =
-            event.prevs().iter().map(|&e| e.to_string()).collect();
+        let backwards: Vec<_> = event.prevs().iter().map(|&e| e.to_string()).collect();
 
-        let event_references_chunk =
-            backwards.iter().any(|e| self.event_ids.contains(e));
+        let event_references_chunk = backwards.iter().any(|e| self.event_ids.contains(e));
 
         let chunk_references_event = self
             .events
@@ -607,10 +563,7 @@ where
             .flat_map(|e| e.prevs())
             .any(|e_id| e_id == event.id());
 
-        if self.event_ids.is_empty()
-            || event_references_chunk
-            || chunk_references_event
-        {
+        if self.event_ids.is_empty() || event_references_chunk || chunk_references_event {
             for e in &backwards {
                 self.forward_extremities.remove(e);
                 if !self.event_ids.contains(e) {
@@ -670,8 +623,7 @@ where
         let mut graph = petgraph::graphmap::DiGraphMap::new();
         let mut missing: HashSet<String> = HashSet::new();
 
-        let event_map: HashMap<_, _> =
-            events.iter().map(|e| (e.id().to_string(), e)).collect();
+        let event_map: HashMap<_, _> = events.iter().map(|e| (e.id().to_string(), e)).collect();
 
         for event in event_map.values() {
             for prev_event_id in f(event) {
@@ -778,12 +730,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn sign(
-            &mut self,
-            _server_name: String,
-            _key_name: String,
-            _key: &sign::SecretKey,
-        ) {
+        fn sign(&mut self, _server_name: String, _key_name: String, _key: &sign::SecretKey) {
             unimplemented!()
         }
     }
@@ -863,8 +810,7 @@ mod tests {
 
         assert_eq!(order, expected_order);
 
-        let expected_missing: HashSet<String> =
-            vec!["A".to_string()].into_iter().collect();
+        let expected_missing: HashSet<String> = vec!["A".to_string()].into_iter().collect();
         assert_eq!(missing, expected_missing);
     }
 
@@ -918,17 +864,10 @@ mod tests {
     #[test]
     fn test_handle() {
         let (_pubkey, secret_key) = sign::gen_keypair();
-        let client = HyperFederationClient::new(
-            (),
-            String::new(),
-            String::new(),
-            secret_key,
-        );
+        let client = HyperFederationClient::new((), String::new(), String::new(), secret_key);
 
-        let handler = Handler::<StateMapWithData<String>, _>::new(
-            memory::MemoryStoreFactory::new(),
-            client,
-        );
+        let handler =
+            Handler::<StateMapWithData<String>, _>::new(memory::MemoryStoreFactory::new(), client);
 
         let events = vec![
             TestEvent {
@@ -961,8 +900,7 @@ mod tests {
             },
         ];
 
-        let fut = handler
-            .handle_new_timeline_events::<DummyVersion>("foo", "bar", events);
+        let fut = handler.handle_new_timeline_events::<DummyVersion>("foo", "bar", events);
 
         let results = block_on(fut).unwrap();
 

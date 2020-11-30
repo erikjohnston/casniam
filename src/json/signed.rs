@@ -32,27 +32,25 @@ where
             unsigned: U::default(),
         })
     }
+
+    pub fn wrap_with_unsigned(value: V, unsigned: U) -> Result<Signed<V, U>, Error> {
+        Ok(Signed {
+            value: Canonical::wrap(value)?,
+            signatures: BTreeMap::new(),
+            unsigned,
+        })
+    }
 }
 
 impl<V, U> Signed<V, U> {
-    pub fn add_signature(
-        &mut self,
-        server_name: String,
-        key_name: String,
-        signature: Signature,
-    ) {
+    pub fn add_signature(&mut self, server_name: String, key_name: String, signature: Signature) {
         self.signatures
             .entry(server_name)
             .or_default()
             .insert(key_name, Base64Signature(signature));
     }
 
-    pub fn sign(
-        &mut self,
-        server_name: String,
-        key_name: String,
-        key: &SecretKey,
-    ) {
+    pub fn sign(&mut self, server_name: String, key_name: String, key: &SecretKey) {
         let sig = self.sign_detached(key);
         self.add_signature(server_name, key_name, sig);
     }
@@ -101,22 +99,14 @@ where
 
         let signatures: BTreeMap<String, BTreeMap<String, Base64Signature>> =
             serde_json::from_value(raw_sigs).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "Failed to parse signature field: {}",
-                    err
-                ))
+                serde::de::Error::custom(format!("Failed to parse signature field: {}", err))
             })?;
 
-        let unsigned: U =
-            serde_json::from_value(raw_unsigned).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "Failed to parse unsigned field: {}",
-                    err
-                ))
-            })?;
+        let unsigned: U = serde_json::from_value(raw_unsigned).map_err(|err| {
+            serde::de::Error::custom(format!("Failed to parse unsigned field: {}", err))
+        })?;
 
-        let canonical =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let canonical = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
         Ok(Signed {
             value: canonical,
@@ -134,19 +124,15 @@ where
     where
         S: Serializer,
     {
-        let mut v = serde_json::to_value(&self.value)
-            .map_err(serde::ser::Error::custom)?;
-        let s = serde_json::to_value(&self.signatures)
-            .map_err(serde::ser::Error::custom)?;
-        let u = serde_json::to_value(&self.unsigned)
-            .map_err(serde::ser::Error::custom)?;
+        let mut v = serde_json::to_value(&self.value).map_err(serde::ser::Error::custom)?;
+        let s = serde_json::to_value(&self.signatures).map_err(serde::ser::Error::custom)?;
+        let u = serde_json::to_value(&self.unsigned).map_err(serde::ser::Error::custom)?;
 
         v.as_object_mut()
             .unwrap()
             .insert("signatures".to_string(), s);
 
-        if !u.is_null() && u.as_object().map(|m| !m.is_empty()).unwrap_or(true)
-        {
+        if !u.is_null() && u.as_object().map(|m| !m.is_empty()).unwrap_or(true) {
             v.as_object_mut().unwrap().insert("unsigned".to_string(), u);
         }
 
@@ -180,10 +166,7 @@ impl serde::Serialize for Base64Signature {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&base64::encode_config(
-            &self.0,
-            base64::STANDARD_NO_PAD,
-        ))
+        serializer.serialize_str(&base64::encode_config(&self.0, base64::STANDARD_NO_PAD))
     }
 }
 
@@ -195,12 +178,7 @@ impl<'de> serde::Deserialize<'de> for Base64Signature {
         let de_string: String = String::deserialize(deserializer)?;
 
         let slice = base64::decode_config(&de_string, base64::STANDARD_NO_PAD)
-            .map_err(|e| {
-                D::Error::custom(format_args!(
-                    "invalid base64: {}, {}",
-                    de_string, e,
-                ))
-            })?;
+            .map_err(|e| D::Error::custom(format_args!("invalid base64: {}, {}", de_string, e,)))?;
 
         let sig = Signature::from_slice(&slice)
             .ok_or_else(|| D::Error::custom("signature incorrect length"))?;
@@ -232,11 +210,9 @@ mod tests {
         let serialized = r#""X2t7jN0jaJsiZWp57da9GqmQ874QFbukCMSqc5VclaB+2n4i8LPcZDkD6+fzg4tkfpSsiIDogkY4HWv1cnGhAg""#;
 
         let sig_bytes = b"_k{\x8c\xdd#h\x9b\"ejy\xed\xd6\xbd\x1a\xa9\x90\xf3\xbe\x10\x15\xbb\xa4\x08\xc4\xaas\x95\\\x95\xa0~\xda~\"\xf0\xb3\xdcd9\x03\xeb\xe7\xf3\x83\x8bd~\x94\xac\x88\x80\xe8\x82F8\x1dk\xf5rq\xa1\x02";
-        let expected_sig =
-            Base64Signature(sign::Signature::from_slice(sig_bytes).unwrap());
+        let expected_sig = Base64Signature(sign::Signature::from_slice(sig_bytes).unwrap());
 
-        let de_sig: Base64Signature =
-            serde_json::from_str(&serialized).unwrap();
+        let de_sig: Base64Signature = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(de_sig, expected_sig);
     }
@@ -253,10 +229,9 @@ mod tests {
 
     #[test]
     fn signed_deserialize() {
-        let s: Signed<A> = serde_json::from_str(
-            r#"{ "a": 1, "b": 2, "signatures": {}, "unsigned": {} }"#,
-        )
-        .unwrap();
+        let s: Signed<A> =
+            serde_json::from_str(r#"{ "a": 1, "b": 2, "signatures": {}, "unsigned": {} }"#)
+                .unwrap();
 
         assert_eq!(s.value.as_ref(), &A { a: 1 });
         assert_eq!(s.signatures.len(), 0);
@@ -274,10 +249,9 @@ mod tests {
 
     #[test]
     fn signed_roundtrip() {
-        let s: Signed<B> = serde_json::from_str(
-            r#"{ "a": 1, "signatures": {}, "unsigned": {"test": 1} }"#,
-        )
-        .unwrap();
+        let s: Signed<B> =
+            serde_json::from_str(r#"{ "a": 1, "signatures": {}, "unsigned": {"test": 1} }"#)
+                .unwrap();
 
         assert_eq!(s.value.as_ref(), &B { b: None });
         assert_eq!(s.signatures.len(), 0);
@@ -325,11 +299,10 @@ mod tests {
             my_key: String,
         };
 
-        let mut s: Signed<Test, serde_json::value::Value> =
-            Signed::wrap(Test {
-                my_key: "my_data".to_string(),
-            })
-            .unwrap();
+        let mut s: Signed<Test, serde_json::value::Value> = Signed::wrap(Test {
+            my_key: "my_data".to_string(),
+        })
+        .unwrap();
 
         assert_eq!(
             s.as_ref(),

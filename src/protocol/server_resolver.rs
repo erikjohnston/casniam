@@ -14,6 +14,7 @@ use native_tls::TlsConnector;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_tls::TlsConnector as AsyncTlsConnector;
+use trust_dns_resolver::error::ResolveErrorKind;
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -112,10 +113,25 @@ impl MatrixResolver {
             }]);
         }
 
-        let records = self
+        let result = self
             .resolver
             .srv_lookup(format!("_matrix._tcp.{}", host).as_ref())
-            .await?;
+            .await;
+
+        let records = match result {
+            Ok(records) => records,
+            Err(err) => match err.kind() {
+                ResolveErrorKind::NoRecordsFound { .. } => {
+                    return Ok(vec![Endpoint {
+                        host: host.clone(),
+                        port: 8448,
+                        host_header: authority.to_string(),
+                        tls_name: host.clone(),
+                    }])
+                }
+                _ => return Err(err.into()),
+            },
+        };
 
         let mut priority_map: BTreeMap<u16, Vec<_>> = BTreeMap::new();
 
